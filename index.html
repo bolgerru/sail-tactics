@@ -232,6 +232,62 @@
         const MAX_WIND_DEVIATION = 30 * Math.PI / 180; // Clamp total deviation
         const MAX_SHIFT = 20 * Math.PI / 180; // Max shift per event
 
+        // Gusts
+        const gusts = [];
+        const GUST_SPAWN_CHANCE = 0.005; // Much less frequent
+        const GUST_MOVE_SPEED = 0.3;
+        
+        class Gust {
+            constructor() {
+                this.width = Math.random() * 150 + 300; // Much wider (100-250px)
+                this.height = Math.random() * 300 + 175; // Much taller (200-500px)
+                this.x = Math.random() * (width - this.width);
+                this.y = -this.height; // Start above screen
+                this.strength = Math.random() * 0.2 + 1.1; // Reduced: 1.1x to 1.3x speed boost
+                this.active = true;
+            }
+
+            update() {
+                this.y += GUST_MOVE_SPEED;
+                if (this.y > height) {
+                    this.active = false;
+                }
+            }
+
+            draw(ctx) {
+                ctx.save();
+                
+                // Radial gradient for soft edges all around
+                const centerX = this.x + this.width / 2;
+                const centerY = this.y + this.height / 2;
+                
+                // Use a radial gradient scaled to match the ellipse aspect ratio
+                // Since createRadialGradient is circular, we'll scale the context
+                ctx.translate(centerX, centerY);
+                ctx.scale(1, this.height / this.width); // Scale Y to make circle an ellipse
+                
+                // Use strength to determine opacity
+                // Strength ranges 1.2 to 1.6
+                // Map to opacity 0.2 to 0.5
+                const baseOpacity = 0.2 + (this.strength - 1.2) * 0.75;
+                const edgeOpacity = baseOpacity * 0.75;
+
+                const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.width / 2);
+                gradient.addColorStop(0, `rgba(0, 30, 80, ${baseOpacity})`); // Center darker based on strength
+                gradient.addColorStop(0.6, `rgba(0, 30, 80, ${edgeOpacity})`); 
+                gradient.addColorStop(1, "rgba(0, 30, 80, 0)"); // Fade to transparent
+
+                
+                ctx.fillStyle = gradient;
+                
+                ctx.beginPath();
+                ctx.arc(0, 0, this.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.restore();
+            }
+        }
+
         class Boat {
             constructor(x, y, isUser = false) {
                 this.x = x;
@@ -295,7 +351,30 @@
                     }
                 }
 
-                const currentSpeed = isTacking ? BOAT_SPEED * tackMultiplier : BOAT_SPEED;
+                const currentSpeedBase = isTacking ? BOAT_SPEED * tackMultiplier : BOAT_SPEED;
+                let currentSpeed = currentSpeedBase;
+
+                // Check Gusts
+                let speedMultiplier = 1.0;
+                for (const g of gusts) {
+                    // Check intersection with ellipse logic or simplified bounding box
+                    // Bounding box is okay, but let's be more precise if possible
+                    // Or stick to rect for speed, but stacking is key.
+                    
+                    // Simple collision: check if boat center is inside gust rect
+                    if (this.x >= g.x && this.x <= g.x + g.width &&
+                        this.y >= g.y && this.y <= g.y + g.height) {
+                        
+                        // Overlapping gusts stack multiplicatively
+                        speedMultiplier *= g.strength;
+                    }
+                }
+                
+                // Cap max boost to 1.3x
+                if (speedMultiplier > 1.3) speedMultiplier = 1.3;
+                
+                currentSpeed *= speedMultiplier;
+
                 this.x += Math.sin(this.heading) * currentSpeed;
                 this.y -= Math.cos(this.heading) * currentSpeed;
 
@@ -470,6 +549,7 @@
 
         function resetGame() {
             boats.length = 0;
+            gusts.length = 0;
             const startY = height - 50; // Start at bottom
             
             // Distribute boats
@@ -683,6 +763,27 @@
                     if (newTarget > MAX_WIND_DEVIATION) newTarget = MAX_WIND_DEVIATION;
                     if (newTarget < -MAX_WIND_DEVIATION) newTarget = -MAX_WIND_DEVIATION;
                     windTarget = newTarget;
+                }
+            }
+
+            // Gust Logic & Rendering (Draw under boats)
+            if (gameState === 'playing' || gameState === 'race_on' || gameState === 'starting' || gameState === 'waiting') {
+                // Spawn
+                if (gameState !== 'waiting' && Math.random() < GUST_SPAWN_CHANCE) {
+                    gusts.push(new Gust());
+                }
+                
+                // Update & Draw
+                for (let i = gusts.length - 1; i >= 0; i--) {
+                    const g = gusts[i];
+                    if (gameState !== 'waiting') g.update(); // Only move if game is active-ish
+                    
+                    // Draw active gusts
+                    g.draw(ctx);
+
+                    if (!g.active) {
+                        gusts.splice(i, 1);
+                    }
                 }
             }
 
