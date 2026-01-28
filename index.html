@@ -239,8 +239,17 @@
         
         class Gust {
             constructor() {
-                this.width = Math.random() * 150 + 300; // Much wider (100-250px)
-                this.height = Math.random() * 300 + 175; // Much taller (200-500px)
+                // Make size proportional to screen size
+                // Width: 25% to 40% of screen width
+                const minW = width * 0.25;
+                const varW = width * 0.15;
+                this.width = Math.random() * varW + minW;
+                
+                // Height: 20% to 40% of screen height
+                const minH = height * 0.2;
+                const varH = height * 0.2;
+                this.height = Math.random() * varH + minH;
+
                 this.x = Math.random() * (width - this.width);
                 this.y = -this.height; // Start above screen
                 this.strength = Math.random() * 0.2 + 1.1; // Reduced: 1.1x to 1.3x speed boost
@@ -300,6 +309,8 @@
                 this.finished = false;
                 this.spinDir = Math.random() < 0.5 ? 1 : -1; // For Will mode
                 this.moving = false; // Waiting for start
+                this.trail = []; // Wake trail
+                this.luffTimer = 0; // For sail animation
             }
 
             updateTargetHeading() {
@@ -377,6 +388,48 @@
 
                 this.x += Math.sin(this.heading) * currentSpeed;
                 this.y -= Math.cos(this.heading) * currentSpeed;
+
+                // Update Trail
+                // Calculate Stern Position (Back of boat)
+                // Boat Center is (x,y). Heading 0 is Up.
+                // Stern is 'down' in local space (0, radius).
+                // Rotated: 
+                // sternX = x - sin(h) * r
+                // sternY = y + cos(h) * r
+                // Wait, sin(0)=0, cos(0)=1. sternY = y + r. Correct (below center).
+                const sternX = this.x - Math.sin(this.heading) * this.radius;
+                const sternY = this.y + Math.cos(this.heading) * this.radius;
+
+                // Only add point if we've moved enough distance
+                let addPoint = false;
+                if (this.trail.length === 0) {
+                    addPoint = true;
+                } else {
+                    const lastPos = this.trail[this.trail.length - 1];
+                    const dist = Math.hypot(sternX - lastPos.x, sternY - lastPos.y);
+                    if (dist > 2) addPoint = true; // High resolution for smooth trails
+                }
+                
+                if (addPoint) {
+                    this.trail.push({
+                        x: sternX, 
+                        y: sternY, 
+                        heading: this.heading,
+                        life: 1.0 // Start at full opacity
+                    });
+                }
+                
+                // Decay trail
+                for (let i = this.trail.length - 1; i >= 0; i--) {
+                    const p = this.trail[i];
+                    p.life -= 0.008; // Slower fade (approx 2 seconds)
+                    if (p.life <= 0) {
+                        this.trail.splice(i, 1);
+                    }
+                }
+
+                // Update Luff Timer
+                this.luffTimer += 0.5; // Controls speed of flap
 
                 // User collision with walls
                 if (this.isUser) {
@@ -478,6 +531,77 @@
             }
 
             draw(ctx) {
+                // Draw Wake (V-Shape from stern)
+                if (this.trail.length > 1) {
+                    ctx.save();
+                    ctx.lineJoin = 'round';
+                    ctx.lineCap = 'round';
+                    
+                    const baseHalfWidth = this.radius * 0.5; // Start width at stern
+                    
+                    // Iterate and draw segments
+                    // We draw segment i to i+1
+                    for (let i = 0; i < this.trail.length - 1; i++) {
+                        const p1 = this.trail[i];
+                        const p2 = this.trail[i+1];
+                        
+                        // Calculate width based on life (older = wider)
+                        // Life goes 1.0 (new) -> 0.0 (old)
+                        // Age factor 0.0 -> 1.0
+                        const ageFactor1 = 1.0 - p1.life;
+                        const ageFactor2 = 1.0 - p2.life;
+                        
+                        // Reduce expansion width to keep it closer to boat path (20px max expansion)
+                        const width1 = baseHalfWidth + (ageFactor1 * 5); 
+                        const width2 = baseHalfWidth + (ageFactor2 * 5);
+                        
+                        // Perpendicular vectors
+                        const perpAngle1 = p1.heading + Math.PI / 2;
+                        const dx1 = Math.sin(perpAngle1);
+                        const dy1 = -Math.cos(perpAngle1);
+                        
+                        const perpAngle2 = p2.heading + Math.PI / 2;
+                        const dx2 = Math.sin(perpAngle2);
+                        const dy2 = -Math.cos(perpAngle2);
+                        
+                        // Left Side Segment
+                        const lx1 = p1.x - dx1 * width1;
+                        const ly1 = p1.y - dy1 * width1;
+                        const lx2 = p2.x - dx2 * width2;
+                        const ly2 = p2.y - dy2 * width2;
+                        
+                        // Right Side Segment
+                        const rx1 = p1.x + dx1 * width1;
+                        const ry1 = p1.y + dy1 * width1;
+                        const rx2 = p2.x + dx2 * width2;
+                        const ry2 = p2.y + dy2 * width2;
+                        
+                        // Draw Segment
+                        // Use average life for opacity? Or p1 life?
+                        // p1 is older in the array index sense if we push new ones to end?
+                        // Wait, I push to end. So index 0 is oldest.
+                        // My update loop says trail.push().
+                        // So index 0 is the tail end (fading out). Index length-1 is near boat.
+                        // p1 (index i) is older than p2 (index i+1).
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(lx1, ly1);
+                        ctx.lineTo(lx2, ly2);
+                        ctx.strokeStyle = `rgba(255, 255, 255, ${p1.life * 0.4})`; // Fade out
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(rx1, ry1);
+                        ctx.lineTo(rx2, ry2);
+                        ctx.strokeStyle = `rgba(255, 255, 255, ${p1.life * 0.4})`;
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                    
+                    ctx.restore();
+                }
+
                 ctx.save();
                 ctx.translate(this.x, this.y);
                 ctx.rotate(this.heading);
@@ -497,18 +621,44 @@
 
                 // Draw Sail
                 ctx.fillStyle = 'white';
-                ctx.beginPath();
-                ctx.moveTo(0, -this.radius * 0.5);
-                ctx.lineTo(0, this.radius * 0.5);
-                const boomSide = this.tack > 0 ? -1 : 1;
                 
-                // Boom direction depends on wind direction relative to boat heading
-                // If heading is to the right of wind (> windDirection), wind hits Port side (Left), boom goes Right (+).
-                // If heading is to the left of wind (< windDirection), wind hits Starboard side (Right), boom goes Left (-).
-                const angleRelativeToWind = this.heading - windDirection;
-                const currentBoomSide = angleRelativeToWind > 0 ? 1 : -1;
+                // Luffing Logic
+                // Luff if pointing near wind (heading approx 0 relative to wind) OR if tacking logic is active
+                // Heading is absolute. Wind is absolute (windDirection).
+                // "Directly into wind" means heading is close to windDirection.
+                const angleToWind = Math.abs(this.heading - windDirection);
+                // Also check if heading + 2PI is close to wind if we had wrapping, but here wind is 0.
+                // Normalize angle diff to -PI to PI if needed, but here simple diff usually works since values are small.
+                const luffingThreshold = 20 * Math.PI / 180;
+                // isTacking is local var in update(), need to infer it or just use angle.
+                // Actually, if we are turning (target != heading), we are likely tacking.
+                const isTurning = Math.abs(this.heading - this.targetHeading) > 0.01;
+                const isIntoWind = angleToWind < luffingThreshold;
+                
+                let boomEndX = 0;
+                let boomEndY = this.radius * 0.5;
+                
+                const boomSide = this.tack > 0 ? -1 : 1; // Default boom side
+                
+                if (isIntoWind || isTurning) {
+                    // Flapping / Luffing
+                    // Rapidly oscillate the boom tip or sail shape
+                    // We'll just wiggle the end point X
+                    const wiggle = Math.sin(this.luffTimer) * 5;
+                    boomEndX = wiggle; 
+                    // Sail looks like it's centered but shaking
+                } else {
+                    // Full Sail
+                    // Boom direction depends on wind direction relative to boat heading
+                    const angleRelativeToWind = this.heading - windDirection;
+                    const currentBoomSide = angleRelativeToWind > 0 ? 1 : -1;
+                    boomEndX = currentBoomSide * this.radius * 0.8;
+                }
 
-                ctx.lineTo(currentBoomSide * this.radius * 0.8, this.radius * 0.5); 
+                ctx.beginPath();
+                ctx.moveTo(0, -this.radius * 0.5); // Mast base
+                ctx.lineTo(0, this.radius * 0.5); // Mast top (or vice versa in this drawing logic)
+                ctx.lineTo(boomEndX, boomEndY); // Boom end
                 ctx.closePath();
                 ctx.fill();
                 ctx.stroke();
