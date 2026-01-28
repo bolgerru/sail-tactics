@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sail Tactics Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0077be; /* Ocean blue */
+            font-family: sans-serif;
+            color: white;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            font-size: 1.2rem;
+            text-shadow: 1px 1px 2px black;
+            pointer-events: none;
+        }
+        #settings-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.3);
+            color: white;
+            border: 1px solid white;
+            padding: 5px 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        #settings-modal {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 1000; /* Ensure it's on top of everything including red flag (z-150) and medal (z-200) */
+            width: 80%;
+            max-width: 300px;
+        }
+        #settings-modal label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+        #settings-modal input, #settings-modal select {
+            margin-bottom: 10px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #medal {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            display: flex; /* Initially none, handled by JS */
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            border: 5px solid white;
+            z-index: 200;
+            color: white;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            pointer-events: auto; /* Allow clicking to restart */
+            cursor: pointer;
+        }
+        #medal h1 { margin: 0; font-size: 3rem; }
+        #start-timer {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 8rem;
+            font-weight: bold;
+            color: white;
+            text-shadow: 0 0 10px rgba(0,0,0,0.5);
+            z-index: 120;
+            pointer-events: none;
+            width: 100%;
+            text-align: center;
+        }
+        #red-flag-msg {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 68, 68, 0.9);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            border: 3px solid white;
+            box-shadow: 0 0 20px rgba(255, 0, 0, 0.5);
+            z-index: 150;
+            pointer-events: none;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.05); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
+        #black-flag-msg {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            border: 3px solid white;
+            z-index: 150;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <!-- Wind text removed, will be drawn on canvas -->
+    </div>
+    <button id="settings-btn">⚙️ Settings</button>
+    <div id="settings-modal">
+        <h2>Settings</h2>
+        
+        <label>Wind Speed</label>
+        <input type="range" id="opt-speed" min="0.05" max="0.2" step="0.01">
+
+        <label>Number of Boats: <span id="opt-boats-val"></span></label>
+        <input type="range" id="opt-boats" min="2" max="10" step="1">
+
+        <label>Difficulty</label>
+        <select id="opt-diff">
+            <option value="matty">Matty (Easiest)</option>
+            <option value="louis">Louis</option>
+            <option value="will">Will</option>
+            <option value="monkey">Monkey</option>
+            <option value="oisin">Oisin</option>
+            <option value="max">Max</option>
+            <option value="russell">Russell (Hardest)</option>
+        </select>
+
+        <br>
+        <button id="save-btn">Save & Restart</button>
+    </div>
+
+    <div id="start-timer"></div>
+    
+    <div id="black-flag-msg">
+        🏴 BLACK FLAG!
+    </div>
+
+    <div id="red-flag-msg">
+        🚩 Eunice:<br>RED FLAG FOR EVERYONE EXCPEPT YOU!
+    </div>
+
+    <div id="medal" style="display: none;">
+        <h1 id="medal-rank">1st</h1>
+        <p id="medal-msg">Congrats!</p>
+        <p style="font-size: 0.8rem; margin-top: 10px;">Tap to Restart</p>
+    </div>
+
+    <div id="instructions">Tap to Start</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const uiInstructions = document.getElementById('instructions');
+
+        // Game State
+        let width, height;
+        const boats = [];
+        let BOAT_SPEED = 0.1; // Configurable
+        let boatCount = 3; // Configurable
+        let difficulty = 'matty'; // Configurable
+
+        const TACK_ANGLE_RAD = 40 * Math.PI / 180;
+        
+        // Colors
+        const COLOR_USER = '#ffcc00'; // Yellow
+        const COLOR_OPPONENT = '#cccccc'; // White/Grey
+        
+        let gameState = 'waiting'; // waiting, starting, playing, finished
+        let startTimer = 3;
+        let startInterval = null;
+        const START_LINE_Y = 600; // Will be set in resetGame
+        let finishedBoatsCount = 0;
+        const FINISH_LINE_Y = 100;
+
+        const TURN_SPEED = 0.05; // Radians per frame
+        
+        // Wind Physics
+        let windDirection = 0; // 0 is from Top (North)
+        let windTarget = 0;
+        // Shift chance per frame (60fps). 0.005 is approx every 3.3s
+        const WIND_SHIFT_CHANCE = 0.005; 
+        const MAX_WIND_DEVIATION = 30 * Math.PI / 180; // Clamp total deviation
+        const MAX_SHIFT = 20 * Math.PI / 180; // Max shift per event
+
+        class Boat {
+            constructor(x, y, isUser = false) {
+                this.x = x;
+                this.y = y;
+                this.isUser = isUser;
+                this.tack = 1; // 1 or -1
+                this.updateTargetHeading();
+                this.heading = this.targetHeading; 
+                this.radius = 15;
+                this.finished = false;
+                this.spinDir = Math.random() < 0.5 ? 1 : -1; // For Will mode
+                this.moving = false; // Waiting for start
+            }
+
+            updateTargetHeading() {
+                // Target is relative to wind direction
+                this.targetHeading = windDirection + (this.tack * TACK_ANGLE_RAD);
+            }
+
+            update() {
+                if (this.finished || !this.moving) return;
+
+                let isTacking = false;
+
+                // Will Mode: Continuous Spin
+                if (!this.isUser && difficulty === 'will') {
+                    this.heading += this.spinDir * TURN_SPEED;
+                    isTacking = true; // Considers turning for speed penalty
+                } 
+                else {
+                    // Normal Logic: Smoothly rotate heading towards targetHeading
+                    this.updateTargetHeading(); // Update target based on wind
+
+                    if (this.heading !== this.targetHeading) {
+                        isTacking = true;
+                        // Handle wrapping logic if we were using 0-360, but here headings are small radians.
+                        // Simple difference is fine.
+                        const diff = this.targetHeading - this.heading;
+                        if (Math.abs(diff) < TURN_SPEED) {
+                            this.heading = this.targetHeading;
+                            isTacking = false;
+                        } else {
+                            this.heading += Math.sign(diff) * TURN_SPEED;
+                        }
+                    }
+                }
+
+                // Move boat
+                let tackMultiplier = 0.7; // Base speed retention
+                
+                if (!this.isUser) {
+                    // Difficulty-based speed retention during tacks
+                    switch(difficulty) {
+                        case 'matty': tackMultiplier = 0.6; break;
+                        case 'louis': tackMultiplier = 0.7; break;
+                        case 'will': tackMultiplier = 0.7; break;
+                        case 'monkey': tackMultiplier = 0.8; break;
+                        case 'oisin': tackMultiplier = 0.9; break;
+                        case 'max': tackMultiplier = 0.95; break;
+                        case 'russell': tackMultiplier = 0.98; break;
+                    }
+                }
+
+                const currentSpeed = isTacking ? BOAT_SPEED * tackMultiplier : BOAT_SPEED;
+                this.x += Math.sin(this.heading) * currentSpeed;
+                this.y -= Math.cos(this.heading) * currentSpeed;
+
+                // User collision with walls
+                if (this.isUser) {
+                    if (this.x - this.radius < 0 || this.x + this.radius > width) {
+                        // Treat wall hit as last place (or DNF)
+                        // Simple end game with message reuse
+                        gameState = 'finished';
+                        medalEl.style.display = 'flex';
+                        medalRank.innerText = "DNF";
+                        medalMsg.innerText = "You hit a wall!";
+                        medalEl.style.backgroundColor = '#ff4444'; // Red for crash
+                        return;
+                    }
+                }
+
+                // AI Tacking Logic
+                if (!this.isUser && difficulty !== 'will') {
+                    const margin = 50;
+                    
+                    // 1. Boundary Avoidance (High Priority)
+                    // Use this.tack to determine intent, not current heading, to avoid oscillation.
+                    // tack -1 is always Leftward (heading < 0), tack 1 is always Rightward (heading > 0) given max wind 30.
+                    if (this.x < margin && this.tack === -1) {
+                        this.tackBoat();
+                    }
+                    else if (this.x > width - margin && this.tack === 1) {
+                        this.tackBoat();
+                    }
+                    // 2. Strategic Tacking (Wind Shifts)
+                    else {
+                        // Difficulty Logic
+                        const windThreshold = 5 * Math.PI / 180;
+                        let reactionChance = 0.005;
+                        let useWindStrategy = true;
+
+                        switch(difficulty) {
+                            case 'matty':
+                                useWindStrategy = false; // Random tacking
+                                reactionChance = 0.002;
+                                break;
+                            case 'louis':
+                                useWindStrategy = false; // Random tacking
+                                reactionChance = 0.004; // Slightly more active
+                                break;
+                            case 'monkey':
+                                useWindStrategy = true;
+                                reactionChance = 0.005; // Slow reaction
+                                break;
+                            case 'oisin':
+                                useWindStrategy = true;
+                                reactionChance = 0.01;
+                                break;
+                            case 'max':
+                                useWindStrategy = true;
+                                reactionChance = 0.02;
+                                break;
+                            case 'russell':
+                                useWindStrategy = true;
+                                reactionChance = 0.05; // Fast reaction
+                                break;
+                        }
+
+                        if (!useWindStrategy) {
+                            // Random tacking completely ignoring wind strategy
+                            if (Math.random() < reactionChance) {
+                                this.tackBoat();
+                            }
+                        } else {
+                            // Strategic Tacking based on Wind
+                            if (windDirection < -windThreshold && this.tack === -1) {
+                                 // Wind from left, currently heading Left. Should tack to Right.
+                                 if (Math.random() < reactionChance) this.tackBoat();
+                            } else if (windDirection > windThreshold && this.tack === 1) {
+                                 // Wind from right, currently heading Right. Should tack to Left.
+                                 if (Math.random() < reactionChance) this.tackBoat();
+                            }
+                        }
+                    }
+                }
+
+                // Bounce off sides instead of wrapping? Or just let them sail off?
+                // User didn't specify, but "no infinite loop" suggests linear course.
+                // We'll let them sail off screen horizontally but keep them updated.
+                
+                // Check finish line
+                if (this.y < FINISH_LINE_Y) {
+                    this.finished = true;
+                    finishedBoatsCount++;
+                    
+                    if (this.isUser) {
+                        let rank = finishedBoatsCount;
+                        let suffix = 'th';
+                        if (rank === 1) suffix = 'st';
+                        else if (rank === 2) suffix = 'nd';
+                        else if (rank === 3) suffix = 'rd';
+                        endGame(rank, suffix);
+                    }
+                }
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.heading);
+
+                // Draw Hull
+                ctx.fillStyle = this.isUser ? COLOR_USER : COLOR_OPPONENT;
+                ctx.beginPath();
+                ctx.moveTo(0, -this.radius); // Bow
+                ctx.lineTo(this.radius * 0.7, this.radius); // Rear Right
+                ctx.lineTo(0, this.radius * 0.8); // Center Rear
+                ctx.lineTo(-this.radius * 0.7, this.radius); // Rear Left
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                // Draw Sail
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.moveTo(0, -this.radius * 0.5);
+                ctx.lineTo(0, this.radius * 0.5);
+                const boomSide = this.tack > 0 ? -1 : 1;
+                
+                // Boom direction depends on wind direction relative to boat heading
+                // If heading is to the right of wind (> windDirection), wind hits Port side (Left), boom goes Right (+).
+                // If heading is to the left of wind (< windDirection), wind hits Starboard side (Right), boom goes Left (-).
+                const angleRelativeToWind = this.heading - windDirection;
+                const currentBoomSide = angleRelativeToWind > 0 ? 1 : -1;
+
+                ctx.lineTo(currentBoomSide * this.radius * 0.8, this.radius * 0.5); 
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            tackBoat() {
+                if (this.finished) return;
+                // Prevent double tacking if turn is not complete
+                if (Math.abs(this.heading - this.targetHeading) > 0.01) return;
+
+                this.tack *= -1;
+                this.updateTargetHeading();
+            }
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+
+        function init() {
+            resize();
+            window.addEventListener('resize', resize);
+            resetGame();
+            requestAnimationFrame(gameLoop);
+
+            // Open Settings immediately
+            optSpeed.value = BOAT_SPEED;
+            optBoats.value = boatCount;
+            optDiff.value = difficulty;
+            updateSettingsUI();
+            settingsModal.style.display = 'block';
+        }
+
+        function resetGame() {
+            boats.length = 0;
+            const startY = height - 50; // Start at bottom
+            
+            // Distribute boats
+            const userIndex = Math.floor(boatCount / 2);
+            
+            // Available width for boats (keep margins)
+            const margin = Math.min(width * 0.1, 50);
+            const availableWidth = width - (2 * margin);
+            // If only 1 boat (shouldn't happen with min 2), center it.
+            // If > 1, spacing = width / (count - 1)
+            const step = boatCount > 1 ? availableWidth / (boatCount - 1) : 0;
+
+            // Reset Wind
+            windDirection = 0;
+            windTarget = 0;
+            
+            finishedBoatsCount = 0;
+
+            for (let i = 0; i < boatCount; i++) {
+                const x = boatCount > 1 ? margin + (i * step) : width / 2;
+                boats.push(new Boat(x, startY, i === userIndex));
+            }
+
+            gameState = 'waiting';
+            uiInstructions.innerText = "Tap to Start Sequence";
+            medalEl.style.display = 'none'; // Hide medal
+            blackFlagMsg.style.display = 'none'; // Hide BF
+            
+            // Show Eunice message if Will mode
+            // BUT only after start. Wait for GO.
+            redFlagMsg.style.display = 'none';
+        }
+
+        function endGame(rank, suffix) {
+            gameState = 'finished';
+            uiInstructions.innerText = ""; // Clear bottom text
+            redFlagMsg.style.display = 'none'; // Hide Eunice
+            
+            // Show Medal
+            medalEl.style.display = 'flex';
+            medalRank.innerText = `${rank}${suffix}`;
+            
+            let color = '#CD7F32'; // Bronze default
+            if (rank === 1) color = '#FFD700'; // Gold
+            else if (rank === 2) color = '#C0C0C0'; // Silver
+            
+            // Handle DNF specially
+            if (rank === "DNF") {
+                medalRank.innerText = "DNF";
+                color = '#ff4444';
+            }
+            
+            medalEl.style.backgroundColor = color;
+            
+            // Special message for 1st place
+            if (rank === 1) {
+                // Capitalize difficulty name
+                const diffName = difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+                let winMsg = `Congrats! You beat ${diffName}!`;
+                if (difficulty === 'matty') {
+                    winMsg += "\nWant a medal bro?";
+                }
+                medalMsg.innerText = winMsg;
+            } 
+            else if (rank === "DNF") {
+                 // Already handled by wall collision msg setting, but ensure safety
+            }
+            else {
+                medalMsg.innerText = "Unlucky pal, stick to college work";
+            }
+        }
+
+        function drawWindArrow(ctx) {
+            // Draw a big arrow at the top center indicating wind from top
+            const x = width / 2; // Center horizontally
+            const y = 60; // Slightly down from top
+            const arrowLen = 40;
+            
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // Rotate based on windDirection.
+            // windDirection 0 is From Top (arrow points down).
+            // +windDirection means wind coming from East of North? 
+            // In canvas, y is down. Math.sin(heading) moves +x (right).
+            // Our boats move with heading 0 as UP. Wait.
+            // Boat: dy = -cos(heading). dx = sin(heading). 
+            // Heading 0 -> dy=-1 (Up), dx=0. So heading 0 is North.
+            // Boat tack is +/- 40 deg.
+            // If wind is 0 (North), boat heads +/- 40.
+            
+            // If wind shifts +10 deg (from NNE), it comes from slightly right.
+            // Boat on starboard (+tack) must head +10 + 40 = +50.
+            // Boat on port (-tack) must head +10 - 40 = -30.
+            // This matches our formula: target = wind + tack*40.
+            
+            // Visualizing the Arrow:
+            // Arrow points DOWN (with the wind).
+            // If windDirection is 0, arrow points DOWN (PI).
+            // If windDirection is +10 deg, wind blows towards South-West?
+            // Wait. Wind direction usually means "FROM".
+            // If wind is FROM 10 degrees (NNE), it blows TOWARDS 190 degrees (SSW).
+            // So arrow rotation should be PI + windDirection.
+            ctx.rotate(windDirection);
+
+            // Wind is FROM top (North), so arrow points DOWN (South)
+            // But usually "Wind Direction" arrows point into the wind?
+            // "Wind from Top" -> Wind blows DOWN.
+            // Let's draw an arrow pointing DOWN to show airflow direction.
+            
+            ctx.strokeStyle = 'white';
+            ctx.fillStyle = 'white';
+            ctx.lineWidth = 3;
+            
+            ctx.beginPath();
+            ctx.moveTo(0, -arrowLen/2);
+            ctx.lineTo(0, arrowLen/2);
+            ctx.stroke();
+
+            // Arrowhead at bottom
+            ctx.beginPath();
+            ctx.moveTo(0, arrowLen/2);
+            ctx.lineTo(-10, arrowLen/2 - 10);
+            ctx.lineTo(10, arrowLen/2 - 10);
+            ctx.closePath();
+            ctx.fill();
+
+            // Text should remain upright-ish or rotate with arrow? 
+            // Let's keep "WIND" label relative to arrow or fixed.
+            // If we rotate context, text rotates. 
+            // Let's draw text before rotation or untranslate.
+            ctx.restore();
+            
+            // Draw text separately to keep it horizontal
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.fillStyle = 'white';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("WIND", 0, -arrowLen/2 - 15);
+            ctx.restore();
+        }
+
+        function drawStartLine(ctx) {
+            // Only draw during starting phase
+            if (gameState !== 'starting' && gameState !== 'waiting') return;
+            
+            // Draw a line near bottom where boats should stay behind
+            const lineY = height - 100; // 50px above startY usually
+            
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([10, 10]); 
+            ctx.beginPath();
+            ctx.moveTo(0, lineY);
+            ctx.lineTo(width, lineY);
+            ctx.stroke();
+            ctx.setLineDash([]); 
+
+            ctx.fillStyle = '#ffff00';
+            ctx.textAlign = 'right';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.fillText("START LINE", width - 20, lineY - 10);
+        }
+
+        function drawFinishLine(ctx) {
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([20, 20]); // Dashed line
+            ctx.beginPath();
+            ctx.moveTo(0, FINISH_LINE_Y);
+            ctx.lineTo(width, FINISH_LINE_Y);
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset
+
+            // Label
+            ctx.fillStyle = '#ff4444';
+            ctx.textAlign = 'right';
+            ctx.font = 'bold 20px sans-serif';
+            ctx.fillText("FINISH", width - 20, FINISH_LINE_Y - 10);
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, width, height);
+
+            // Draw Background Elements
+            drawFinishLine(ctx);
+            // drawStartLine(ctx); // Removed
+            drawWindArrow(ctx);
+
+            // Wind Shift Logic
+            if (gameState === 'playing' || gameState === 'starting') {
+                // Smoothly interpolate windDirection to windTarget
+                if (windDirection !== windTarget) {
+                    const diff = windTarget - windDirection;
+                    if (Math.abs(diff) < 0.005) {
+                        windDirection = windTarget;
+                    } else {
+                        windDirection += diff * 0.05; // Ease to target
+                    }
+                }
+
+                // Randomly pick new target
+                if (Math.random() < WIND_SHIFT_CHANCE) {
+                    const shift = (Math.random() - 0.5) * 2 * MAX_SHIFT;
+                    // Bias towards center: The further out, the stronger the pull back
+                    const centeringBias = -windTarget * 0.5;
+                    
+                    let newTarget = windTarget + shift + centeringBias;
+                    // Clamp
+                    if (newTarget > MAX_WIND_DEVIATION) newTarget = MAX_WIND_DEVIATION;
+                    if (newTarget < -MAX_WIND_DEVIATION) newTarget = -MAX_WIND_DEVIATION;
+                    windTarget = newTarget;
+                }
+            }
+
+            // Update Boats only if playing or starting (for AI positioning/user mistakes)
+            if (gameState === 'playing' || gameState === 'race_on') {
+                boats.forEach(boat => boat.update());
+                
+                // Check if all boats finished to stop loop logic? 
+                // Or just keep running. 
+            } else if (gameState === 'starting') {
+                // Allow movement but check black flag
+                // Actually, boats should stay still until tapped in previous logic. 
+                // Now, user taps to start TIMER.
+                // During timer, if user moves across line -> Black Flag.
+                // AI should wait for timer.
+                
+                // Let's change input logic. 
+                // Tap to start timer. Boats are frozen? Or can they sail?
+                // "User has to tap once timer reaches 0". 
+                // This implies user taps at 0 to GO. 
+                // If they tap before 0? "if too soon they are told they got a Black Flag"
+                // So tapping trigger the start. 
+                
+                // Revised Flow:
+                // 1. Game loads 'waiting'. Tap to Start SEQUENCE.
+                // 2. State 'starting'. Timer counts down 5..4..3..2..1..0.
+                // 3. During countdown, input is ignored? No, "if too soon... Black Flag".
+                // So tapping during countdown = Black Flag.
+                // 4. At 0, State 'playing'. AI starts automatically. User must tap to start moving?
+                // Or user taps at 0 to launch?
+                // Usually sailing games: you sail pre-start.
+                // "tap once the timer reaches 0" -> Tap to launch boat.
+                
+                // So during 'starting', boats are frozen at start line?
+                // "if too soon they are told they got a Black Flag" -> Tapping during countdown = lose.
+            }
+
+            // Draw Boats
+            boats.forEach(boat => boat.draw(ctx));
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        /* MOVED UP - Defined above now */
+        // const startTimerEl = document.getElementById('start-timer');
+        // const blackFlagMsg = document.getElementById('black-flag-msg');
+
+        function startSequence() {
+            gameState = 'starting';
+            // uiInstructions.innerText = "Wait for 0..."; // Removed instruction, just timer
+            uiInstructions.innerText = ""; 
+            startTimer = 3;
+            startTimerEl.style.display = 'block';
+            startTimerEl.innerText = startTimer;
+            
+            // Clear any existing interval
+            if (startInterval) clearInterval(startInterval);
+            
+            startInterval = setInterval(() => {
+                startTimer--;
+                if (startTimer > 0) {
+                    startTimerEl.innerText = startTimer;
+                } else if (startTimer === 0) {
+                    startTimerEl.innerText = "GO!";
+                    gameState = 'race_on'; 
+                    launchAI();
+                } else {
+                    // Timer finished (negative), game is officially playable if not already
+                    clearInterval(startInterval);
+                    startTimerEl.style.display = 'none';
+                }
+            }, 1000);
+        }
+
+        function launchAI() {
+            // Start all AI boats immediately
+            boats.forEach(boat => {
+                if (!boat.isUser) {
+                    boat.moving = true;
+                }
+            });
+        }
+
+        // Add moving flag to boat
+        // Update Boat constructor to include moving = false
+        // Update Boat.update to return if !this.moving
+
+        function handleInput(e) {
+            if (gameState === 'waiting') {
+                startSequence();
+            } 
+            else if (gameState === 'starting') {
+                // User tapped during countdown!
+                if (startTimer > 0) {
+                    clearInterval(startInterval);
+                    startTimerEl.style.display = 'none';
+                    gameState = 'finished';
+                    blackFlagMsg.style.display = 'block';
+                    uiInstructions.innerText = "Tap to Restart";
+                    // Fail state
+                } else {
+                    // Timer is 0 or race_on (though race_on usually handled by interval finish)
+                    // If timer is 0 (GO displayed), valid start
+                    // State becomes playing
+                    gameState = 'playing';
+                    uiInstructions.innerText = "Tap to Tack";
+                    startTimerEl.style.display = 'none';
+                    
+                    // Find user boat and enable it
+                    const userBoat = boats.find(b => b.isUser);
+                    if (userBoat) {
+                        userBoat.moving = true;
+                    }
+                    
+                    // Also trigger AI if they haven't started (race_on handles it, but just in case)
+                    if (startInterval) clearInterval(startInterval);
+                    launchAI();
+                    
+                    // Show Eunice message if Will mode (delayed start)
+                    if (difficulty === 'will') {
+                        redFlagMsg.style.display = 'block';
+                    }
+                }
+            }
+            else if (gameState === 'race_on') {
+                 // User tapped after GO disappeared (late start)
+                 gameState = 'playing';
+                 uiInstructions.innerText = "Tap to Tack";
+                 startTimerEl.style.display = 'none'; // Ensure timer is hidden
+                 
+                 const userBoat = boats.find(b => b.isUser);
+                 if (userBoat) {
+                     userBoat.moving = true;
+                 }
+                 
+                 if (difficulty === 'will') {
+                        redFlagMsg.style.display = 'block';
+                 }
+            }
+            else if (gameState === 'playing') {
+                const userBoat = boats.find(b => b.isUser);
+                if (userBoat) userBoat.tackBoat();
+            } else if (gameState === 'finished') {
+                resetGame();
+            }
+        }
+
+        window.addEventListener('mousedown', handleInput);
+        window.addEventListener('touchstart', (e) => {
+            // Check if touch target is UI
+            if (e.target.closest('#settings-btn') || e.target.closest('#settings-modal')) {
+                return;
+            }
+            e.preventDefault();
+            handleInput(e);
+        }, { passive: false });
+
+        const medalEl = document.getElementById('medal');
+        const medalRank = document.getElementById('medal-rank');
+        const medalMsg = document.getElementById('medal-msg');
+        const redFlagMsg = document.getElementById('red-flag-msg');
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsModal = document.getElementById('settings-modal');
+        const saveBtn = document.getElementById('save-btn');
+        const optSpeed = document.getElementById('opt-speed');
+        const optSpeedVal = document.getElementById('opt-speed-val');
+        const optBoats = document.getElementById('opt-boats');
+        const optBoatsVal = document.getElementById('opt-boats-val');
+        const optDiff = document.getElementById('opt-diff');
+        const startTimerEl = document.getElementById('start-timer');
+        const blackFlagMsg = document.getElementById('black-flag-msg');
+
+        function updateSettingsUI() {
+            // optSpeedVal.innerText = parseFloat(optSpeed.value).toFixed(2); // Removed display
+            optBoatsVal.innerText = optBoats.value;
+        }
+
+        settingsBtn.addEventListener('mousedown', (e) => {
+            e.stopPropagation(); // Prevent game input
+            // Load current values
+            optSpeed.value = BOAT_SPEED;
+            optBoats.value = boatCount;
+            optDiff.value = difficulty;
+            updateSettingsUI();
+            
+            settingsModal.style.display = 'block';
+        });
+        
+        // Also handle touch for button specifically if needed, but mousedown often covers it. 
+        // Let's add click just in case.
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        optSpeed.addEventListener('input', updateSettingsUI);
+        optBoats.addEventListener('input', updateSettingsUI);
+
+        saveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // Save values
+            BOAT_SPEED = parseFloat(optSpeed.value);
+            boatCount = parseInt(optBoats.value);
+            difficulty = optDiff.value;
+
+            settingsModal.style.display = 'none';
+            resetGame();
+        });
+        
+        // Prevent clicks in modal from triggering game
+        settingsModal.addEventListener('mousedown', (e) => e.stopPropagation());
+        settingsModal.addEventListener('touchstart', (e) => e.stopPropagation());
+
+        init();
+    </script>
+</body>
+</html>
