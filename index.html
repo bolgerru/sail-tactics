@@ -1016,9 +1016,15 @@
                         if (!useWindStrategy) {
                             // Random tacking completely ignoring wind strategy
                             if (Math.random() < reactionChance) {
-                                // Check blocker first!
-                                if (!this.findTackBlocker()) {
-                                    this.tackBoat();
+                                // Check if tacking hits wall
+                                const futureTack = this.tack * -1;
+                                if ((this.x < margin && futureTack === -1) || (this.x > width - margin && futureTack === 1)) {
+                                    // Unsafe
+                                } else {
+                                    // Check blocker first!
+                                    if (!this.findTackBlocker()) {
+                                        this.tackBoat();
+                                    }
                                 }
                             }
                         } else {
@@ -1026,14 +1032,16 @@
                             if (windDirection < -windThreshold && this.tack === -1) {
                                  // Wind from left, currently heading Left. Should tack to Right.
                                  if (Math.random() < reactionChance) {
-                                     // Check blocker first!
-                                     if (!this.findTackBlocker()) this.tackBoat();
+                                     const futureTack = 1; // Right
+                                     if (this.x > width - margin) { /* Unsafe */ } 
+                                     else if (!this.findTackBlocker()) this.tackBoat();
                                  }
                             } else if (windDirection > windThreshold && this.tack === 1) {
                                  // Wind from right, currently heading Right. Should tack to Left.
                                  if (Math.random() < reactionChance) {
-                                     // Check blocker first!
-                                     if (!this.findTackBlocker()) this.tackBoat();
+                                     const futureTack = -1; // Left
+                                     if (this.x < margin) { /* Unsafe */ }
+                                     else if (!this.findTackBlocker()) this.tackBoat();
                                  }
                             }
                         }
