@@ -585,6 +585,174 @@
                 this.moving = false; // Waiting for start
                 this.trail = []; // Wake trail
                 this.luffTimer = 0; // For sail animation
+                this.dsq = false; // Disqualified flag
+                this.lastTackTime = 0;
+                this.hailingTarget = null;
+                this.hailedBy = null;
+                this.hailTimer = 0;
+            }
+
+            findTackBlocker() {
+                // Determine intended direction
+                // If tack is 1 (Rightward), next tack is -1 (Leftward). We are turning Left.
+                // We check for boats on the side we are turning towards.
+                // Tack 1 -> turning Left (look for boats on Left)
+                // Tack -1 -> turning Right (look for boats on Right)
+                
+                const intendedTack = this.tack * -1;
+                const lookLeft = intendedTack === -1; // Turning Left
+                
+                // Rotate to Wind Space
+                // Wind Direction 0 = From Top.
+                // Rotate by -windDirection to align Y with Wind (inverted?). 
+                // Let's just project onto Cross-Wind Axis and Wind Axis.
+                // Wind Vector is (sin(w), -cos(w))? No, arrow points down.
+                // Let's rely on standard rotation.
+                // Rotate -windDirection.
+                // If wind is 0, no rotation. Y is down. X is right.
+                // Boat heading 0 is Up (-Y). 
+                // Wind from Top (0). Boats sail Up. 
+                // "Horizontal" means X-axis. "Vertical" means Y-axis.
+                
+                const cos = Math.cos(-windDirection);
+                const sin = Math.sin(-windDirection);
+                
+                const myRx = this.x * cos - this.y * sin;
+                const myRy = this.x * sin + this.y * cos;
+                
+                let closest = null;
+                let minDist = Infinity;
+                
+                // Search parameters
+                const rangeX = this.radius * 2.5; // Reduced from 4 (closer hailing)
+                const rangeY = this.radius * 2; // Strict abeam check
+                
+                for (const other of boats) {
+                    if (other === this || other.finished || other.dsq) continue;
+                    
+                    const otherRx = other.x * cos - other.y * sin;
+                    const otherRy = other.x * sin + other.y * cos;
+                    
+                    const dx = otherRx - myRx;
+                    const dy = Math.abs(otherRy - myRy);
+                    
+                    // Check Vertical alignment (Abeam)
+                    if (dy > rangeY) continue;
+                    
+                    // Check Horizontal Side and Distance
+                    let isBlocked = false;
+                    if (lookLeft) {
+                        // Look for boat on Left (dx < 0)
+                        if (dx < 0 && dx > -rangeX) isBlocked = true;
+                    } else {
+                        // Look for boat on Right (dx > 0)
+                        if (dx > 0 && dx < rangeX) isBlocked = true;
+                    }
+                    
+                    if (isBlocked) {
+                        const d = Math.abs(dx);
+                        if (d < minDist) {
+                            minDist = d;
+                            closest = other;
+                        }
+                    }
+                }
+                return closest;
+            }
+
+            initiateHail(target) {
+                if (!target || this.hailingTarget === target) return;
+                
+                this.hailingTarget = target;
+                this.hailingTargetOriginalTack = target.tack; // Track if they moved
+                target.hailedBy = this;
+                target.hailTimer = 60; // Force reaction for ~1 sec
+                
+                // If user is target, we might show UI elsewhere
+            }
+
+            updateHailingLogic() {
+                // 1. Am I hailing someone?
+                if (this.hailingTarget) {
+                    const target = this.hailingTarget;
+                    // Has target tacked away?
+                    const stillBlocking = this.findTackBlocker();
+                    
+                    let shouldClear = false;
+                    if (stillBlocking !== target) {
+                        shouldClear = true;
+                        
+                        // BUT: If target hasn't tacked yet, and we are still close, keep the link!
+                        // This handles the "forced tack into crash" scenario where we tack but they didn't move.
+                        if (target.tack === this.hailingTargetOriginalTack) {
+                            const dist = Math.hypot(target.x - this.x, target.y - this.y);
+                            if (dist < this.radius * 6) { // Still in proximity
+                                shouldClear = false;
+                            }
+                        }
+                    }
+
+                    if (shouldClear) {
+                        // Clear!
+                        this.hailingTarget = null;
+                        if (target) target.hailedBy = null; // Clear their flag
+                        
+                        if (!this.isUser) {
+                            this.tackBoat(true); // Finally tack!
+                        }
+                    }
+                }
+                
+                // 2. Am I being hailed?
+                if (this.hailedBy) {
+                    // I must tack soon.
+                    // But wait, can I tack?
+                    const myBlocker = this.findTackBlocker();
+                    
+                    if (myBlocker) {
+                        // I am blocked too! Chain the hail.
+                        this.initiateHail(myBlocker);
+                    } else {
+                        // I am free to tack.
+                        if (!this.isUser) {
+                            // AI: Force tack immediately (Rule 20 compliance)
+                            this.tackBoat(true);
+                        }
+                        // User: Do nothing (wait for manual input).
+                        // "TACK NOW!" is displayed in draw().
+                    }
+                }
+            }
+
+            isTackingRule() {
+                return (Date.now() - this.lastTackTime) < 1000;
+            }
+
+            getPolygon() {
+                // Vertices relative to center (0,0)
+                // Bow: (0, -radius)
+                // Rear Right: (0.7 * radius, radius)
+                // Rear Left: (-0.7 * radius, radius)
+                
+                const pts = [
+                    {x: 0, y: -this.radius},
+                    {x: this.radius * 0.7, y: this.radius},
+                    {x: -this.radius * 0.7, y: this.radius}
+                ];
+
+                const cos = Math.cos(this.heading);
+                const sin = Math.sin(this.heading);
+
+                return pts.map(p => {
+                    // Rotate
+                    const rx = p.x * cos - p.y * sin;
+                    const ry = p.x * sin + p.y * cos;
+                    // Translate
+                    return {
+                        x: this.x + rx,
+                        y: this.y + ry
+                    };
+                });
             }
 
             updateTargetHeading() {
@@ -593,7 +761,7 @@
             }
 
             update() {
-                if (this.finished || !this.moving) return;
+                if (this.finished || !this.moving || this.dsq) return;
 
                 let isTacking = false;
 
@@ -705,35 +873,113 @@
                 // Update Luff Timer
                 this.luffTimer += 0.5; // Controls speed of flap
 
-                // User collision with walls
-                if (this.isUser) {
-                    if (this.x - this.radius < 0 || this.x + this.radius > width) {
-                        // Treat wall hit as last place (or DNF)
-                        // Simple end game with message reuse
+                // Manage Hail Timer & Logic
+                if (this.hailTimer > 0) this.hailTimer--;
+                this.updateHailingLogic();
+
+                // Collision with walls (User & AI)
+                const poly = this.getPolygon();
+                let hitWall = false;
+                for (const p of poly) {
+                    if (p.x < 0 || p.x > width) {
+                        hitWall = true;
+                        break;
+                    }
+                }
+
+                if (hitWall) {
+                    if (this.isUser) {
+                        // User DNF
                         gameState = 'finished';
                         medalEl.style.display = 'flex';
                         medalRank.innerText = "DNF";
                         medalMsg.innerText = "You hit a wall!";
                         medalEl.style.backgroundColor = '#ff4444'; // Red for crash
-                        sfx.playStartGun(); // Same beep as GO
+                        sfx.playStartGun(); 
                         return;
+                    } else {
+                        // AI DSQ
+                        dsqBoat(this, "Hit the wall");
+                    }
+                }
+                
+                if (this.isUser) {
+                    // User Auto-Hail Logic
+                    // Check if approaching wall and blocked
+                    const margin = 50;
+                    if ((this.x < margin && this.tack === -1) || (this.x > width - margin && this.tack === 1)) {
+                        const blocker = this.findTackBlocker();
+                        if (blocker) {
+                             this.initiateHail(blocker);
+                        }
                     }
                 }
 
                 // AI Tacking Logic
                 if (!this.isUser && difficulty !== 'will') {
                     const margin = 50;
+                    const criticalMargin = 20;
                     
+                    let urgentTack = false;
+                    let isCritical = false;
+
                     // 1. Boundary Avoidance (High Priority)
-                    // Use this.tack to determine intent, not current heading, to avoid oscillation.
-                    // tack -1 is always Leftward (heading < 0), tack 1 is always Rightward (heading > 0) given max wind 30.
-                    if (this.x < margin && this.tack === -1) {
-                        this.tackBoat();
+                    // Use this.tack to determine intent, not current heading.
+                    if (this.x < margin && this.tack === -1) urgentTack = true;
+                    else if (this.x > width - margin && this.tack === 1) urgentTack = true;
+                    
+                    if (this.x < criticalMargin && this.tack === -1) isCritical = true;
+                    else if (this.x > width - criticalMargin && this.tack === 1) isCritical = true;
+
+                    // 2. Collision Avoidance (Port vs Starboard)
+                    // If on Port Tack (1), yield to Starboard Tack (-1)
+                    if (!urgentTack && this.tack === 1) {
+                         // Safety Check: If we are close to the Left Wall (margin), 
+                         // tacking to Starboard (-1) would put us into the wall.
+                         if (this.x < margin) {
+                             // Skip avoidance
+                         } else {
+                             const avoidanceRange = this.radius * 2.5; 
+                             
+                             for (const other of boats) {
+                                 if (other === this || other.finished || other.dsq) continue;
+                                 if (other.hailedBy === this) continue;
+                                 
+                                 if (other.tack === -1) { 
+                                     if (other.x > this.x) { 
+                                         const dx = other.x - this.x;
+                                         const dy = Math.abs(other.y - this.y);
+                                         if (dx < avoidanceRange && dy < avoidanceRange) {
+                                             urgentTack = true;
+                                             // If very close, force tack (Critical)
+                                             if (dx < this.radius * 1.5 && dy < this.radius * 1.5) {
+                                                 isCritical = true;
+                                             }
+                                             break;
+                                         }
+                                     }
+                                 }
+                             }
+                         }
                     }
-                    else if (this.x > width - margin && this.tack === 1) {
-                        this.tackBoat();
+                    
+                    if (urgentTack) {
+                        // Check for blockers before tacking!
+                        const blocker = this.findTackBlocker();
+                        if (blocker) {
+                            if (isCritical) {
+                                // Desperate tack! We hailed them, they didn't move.
+                                // OR collision imminent.
+                                // Tack anyway. If we hit them, they are DSQ (Rule 20).
+                                this.tackBoat(true);
+                            } else {
+                                this.initiateHail(blocker);
+                            }
+                        } else {
+                            this.tackBoat();
+                        }
                     }
-                    // 2. Strategic Tacking (Wind Shifts)
+                    // 3. Strategic Tacking (Wind Shifts)
                     else {
                         // Difficulty Logic
                         const windThreshold = 5 * Math.PI / 180;
@@ -770,16 +1016,25 @@
                         if (!useWindStrategy) {
                             // Random tacking completely ignoring wind strategy
                             if (Math.random() < reactionChance) {
-                                this.tackBoat();
+                                // Check blocker first!
+                                if (!this.findTackBlocker()) {
+                                    this.tackBoat();
+                                }
                             }
                         } else {
                             // Strategic Tacking based on Wind
                             if (windDirection < -windThreshold && this.tack === -1) {
                                  // Wind from left, currently heading Left. Should tack to Right.
-                                 if (Math.random() < reactionChance) this.tackBoat();
+                                 if (Math.random() < reactionChance) {
+                                     // Check blocker first!
+                                     if (!this.findTackBlocker()) this.tackBoat();
+                                 }
                             } else if (windDirection > windThreshold && this.tack === 1) {
                                  // Wind from right, currently heading Right. Should tack to Left.
-                                 if (Math.random() < reactionChance) this.tackBoat();
+                                 if (Math.random() < reactionChance) {
+                                     // Check blocker first!
+                                     if (!this.findTackBlocker()) this.tackBoat();
+                                 }
                             }
                         }
                     }
@@ -790,7 +1045,17 @@
                 // We'll let them sail off screen horizontally but keep them updated.
                 
                 // Check finish line
-                if (this.y < FINISH_LINE_Y) {
+                // Check if any vertex of the boat crosses the finish line
+                const finishPoly = this.getPolygon();
+                let finished = false;
+                for (const p of finishPoly) {
+                    if (p.y <= FINISH_LINE_Y) {
+                        finished = true;
+                        break;
+                    }
+                }
+
+                if (finished) {
                     this.finished = true;
                     finishedBoatsCount++;
                     
@@ -938,25 +1203,65 @@
                 ctx.fill();
                 ctx.stroke();
 
+                if (this.dsq) {
+                    ctx.save();
+                    ctx.translate(0, this.radius * 0.8);
+                    // Point left (-90) if boat leans right, point right (+90) if boat leans left
+                    ctx.rotate(this.heading > 0 ? -Math.PI/2 : Math.PI/2);
+                    drawSmallRedFlag(ctx, 0, 0);
+                    ctx.restore();
+                }
+
+                // Draw Hailing Bubble
+                if (this.hailingTarget) {
+                    ctx.save();
+                    // Keep text upright
+                    ctx.rotate(-this.heading);
+                    
+                    ctx.fillStyle = 'white';
+                    ctx.font = 'bold 14px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'black';
+                    ctx.shadowBlur = 4;
+                    ctx.fillText("Room!", 0, -this.radius * 1.5);
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+                
+                // Draw Warning if Hailed (for User)
+                if (this.isUser && this.hailedBy) {
+                    ctx.save();
+                    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform to draw absolute
+                    ctx.fillStyle = '#ff4444';
+                    ctx.strokeStyle = 'white';
+                    ctx.lineWidth = 2;
+                    ctx.font = 'bold 24px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'black';
+                    ctx.shadowBlur = 4;
+                    ctx.fillText("TACK NOW!", width/2, height/2 - 50);
+                    ctx.strokeText("TACK NOW!", width/2, height/2 - 50);
+                    ctx.restore();
+                }
+
                 ctx.restore();
             }
 
-            tackBoat() {
-                if (this.finished) return;
-                // Prevent double tacking if turn is not complete
-                if (Math.abs(this.heading - this.targetHeading) > 0.01) return;
+            tackBoat(force = false) {
+                if (this.finished) return false;
+                // Prevent double tacking if turn is not complete, unless forced (e.g. by Rule 20)
+                if (!force && Math.abs(this.heading - this.targetHeading) > 0.01) return false;
 
                 this.tack *= -1;
+                this.lastTackTime = Date.now();
                 this.updateTargetHeading();
                 
-                // Audio for user or close boats? Just user + close ones maybe.
-                // For now, if user tacks or nearby
-                // Let's just play for user and maybe slightly quieter for others?
-                // Simplified: Play for user only to reduce chaos, or play for all with distance volume?
-                // Just user for clear feedback.
+                this.hailedBy = null; // Clear liability on tack
+
                 if (this.isUser) {
                     sfx.playTackSound();
                 }
+                return true;
             }
         }
 
@@ -1072,6 +1377,251 @@
                 medalMsg.innerText = "Unlucky pal, stick to college work";
             }
         }
+
+        function isClearAstern(behind, ahead) {
+            // Transform 'behind' position into 'ahead' local space (aligned with heading)
+            // Project vector (behind - ahead) onto ahead's heading vector
+            // Heading 0 is Up (0, -1). Vector is (sin(h), -cos(h))
+            // We want projection onto BACKWARD vector (Stern direction).
+            // Backward vector is opposite of heading? 
+            // Heading is forward. Stern is at +radius along "Back" axis?
+            // Wait, draw() says: moveTo(0, -radius) [Bow], lineTo(0, radius) [Stern].
+            // So in Local Draw Space: Y+ is Back.
+            // Heading angle rotates this space.
+            // So Stern vector direction is essentially same as Heading vector reversed?
+            // Actually, Canvas rotate(h) rotates +Y axis to Heading angle? No.
+            // Canvas coord system: +Y is Down.
+            // Heading 0: Rotation 0. Boat drawn upright. Bow at -r (Up), Stern at +r (Down).
+            // So if Heading is 0, Stern points Down (+Y).
+            // So Stern Vector is (sin(h), -cos(h)) rotated 180?
+            // Actually, simpler:
+            // "Forward" unit vector: dx = sin(h), dy = -cos(h).
+            // Project (B - A) onto Forward vector.
+            // distFwd = (bx-ax)*sin(h) + (by-ay)*(-cos(h))
+            // Stern is at distFwd = -radius.
+            // "Behind stern line" means distFwd < -radius.
+            
+            const dx = behind.x - ahead.x;
+            const dy = behind.y - ahead.y;
+            const fwdX = Math.sin(ahead.heading);
+            const fwdY = -Math.cos(ahead.heading);
+            
+            const distFwd = dx * fwdX + dy * fwdY;
+            
+            return distFwd < -ahead.radius;
+        }
+
+        function drawSmallRedFlag(ctx, x, y) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.fillStyle = '#ff4444';
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 1;
+            
+            // Flag pole
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, -20);
+            ctx.stroke();
+            
+            // Flag
+            ctx.beginPath();
+            ctx.moveTo(0, -20);
+            ctx.lineTo(12, -15);
+            ctx.lineTo(0, -10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+
+        function dsqBoat(boat, reason = "You were on Port! Starboard has right of way.") {
+            if (boat.dsq || boat.finished) return;
+            
+            if (boat.isUser) {
+                gameState = 'finished';
+                medalEl.style.display = 'flex';
+                medalRank.innerText = "DSQ";
+                medalMsg.innerText = reason;
+                medalEl.style.backgroundColor = '#ff4444'; 
+                sfx.playStartGun();
+            } else {
+                boat.dsq = true;
+                boat.moving = false;
+            }
+        }
+
+        function polygonsIntersect(a, b) {
+            const polygons = [a, b];
+            for (let i = 0; i < polygons.length; i++) {
+                const polygon = polygons[i];
+                for (let j = 0; j < polygon.length; j++) {
+                    const p1 = polygon[j];
+                    const p2 = polygon[(j + 1) % polygon.length];
+                    
+                    const normal = { x: p2.y - p1.y, y: p1.x - p2.x };
+                    
+                    let minA = Infinity, maxA = -Infinity;
+                    for (const p of a) {
+                        const projected = normal.x * p.x + normal.y * p.y;
+                        if (projected < minA) minA = projected;
+                        if (projected > maxA) maxA = projected;
+                    }
+                    
+                    let minB = Infinity, maxB = -Infinity;
+                    for (const p of b) {
+                        const projected = normal.x * p.x + normal.y * p.y;
+                        if (projected < minB) minB = projected;
+                        if (projected > maxB) maxB = projected;
+                    }
+                    
+                    if (maxA < minB || maxB < minA) return false;
+                }
+            }
+            return true;
+        }
+
+        function checkCollisions() {
+            // Check every pair
+            for (let i = 0; i < boats.length; i++) {
+                for (let j = i + 1; j < boats.length; j++) {
+                    const b1 = boats[i];
+                    const b2 = boats[j];
+                    
+                    if (b1.finished || b1.dsq || b2.finished || b2.dsq) continue;
+                    
+                    const dx = b1.x - b2.x;
+                    const dy = b1.y - b2.y;
+                    const dist = Math.hypot(dx, dy);
+                    
+                    // Collision radius sum check (Broad Phase)
+                    // Use 1.5 multiplier to ensure we catch corners of the triangle
+                    if (dist < (b1.radius + b2.radius) * 1.5) {
+                        // Narrow Phase: Polygon Intersection
+                        const poly1 = b1.getPolygon();
+                        const poly2 = b2.getPolygon();
+                        
+                        if (polygonsIntersect(poly1, poly2)) {
+                            // Collision! Check Rules.
+                            
+                            // Rule 20: Room to Tack at Obstruction (Highest Priority)
+                            // Check if b1 and b2 are part of a hailing chain.
+                            // Case A: b1 is upstream of b2 (b1 -> ... -> b2). b2 (and downstream) is liable.
+                            // Case B: b2 is upstream of b1 (b2 -> ... -> b1). b1 (and downstream) is liable.
+                            
+                            let upstreamBoat = null;
+                            
+                            // Check b1 -> b2 (Is b1 hailing b2 directly or indirectly?)
+                            let curr = b1;
+                            let loopGuard = 0;
+                            while (curr.hailingTarget && loopGuard < 20) {
+                                if (curr.hailingTarget === b2) {
+                                    upstreamBoat = b1; 
+                                    break;
+                                }
+                                curr = curr.hailingTarget;
+                                loopGuard++;
+                                if (curr === b1) break; 
+                            }
+                            
+                            if (!upstreamBoat) {
+                                // Check b2 -> b1
+                                curr = b2;
+                                loopGuard = 0;
+                                while (curr.hailingTarget && loopGuard < 20) {
+                                    if (curr.hailingTarget === b1) {
+                                        upstreamBoat = b2;
+                                        break;
+                                    }
+                                    curr = curr.hailingTarget;
+                                    loopGuard++;
+                                    if (curr === b2) break;
+                                }
+                            }
+                            
+                            if (upstreamBoat) {
+                                // We found a chain relationship.
+                                // The boat downstream (and the ultimate end of that chain) is liable.
+                                // Trace from upstreamBoat to the very end of the chain.
+                                
+                                let chainEnd = upstreamBoat;
+                                const visited = [];
+                                while (chainEnd.hailingTarget) {
+                                    if (visited.includes(chainEnd)) break;
+                                    visited.push(chainEnd);
+                                    chainEnd = chainEnd.hailingTarget;
+                                }
+                                
+                                dsqBoat(chainEnd, "Failed to give room to tack! (Rule 20 Chain)");
+                            }
+                            
+                            // Rule 13: While Tacking
+                            else {
+                                const b1Tacking = b1.isTackingRule();
+                        const b2Tacking = b2.isTackingRule();
+                        
+                        if (b1Tacking || b2Tacking) {
+                            if (b1Tacking && b2Tacking) {
+                                // Both tacking: One on the left is in the wrong
+                                if (b1.x < b2.x) dsqBoat(b1, "You were on the left while both tacking.");
+                                else dsqBoat(b2, "You were on the left while both tacking.");
+                            } else if (b1Tacking) {
+                                // b1 is tacking -> b1 keeps clear
+                                dsqBoat(b1, "You tacked too close! (Rule 13)");
+                            } else {
+                                // b2 is tacking -> b2 keeps clear
+                                dsqBoat(b2, "You tacked too close! (Rule 13)");
+                            }
+                        }
+                        // Case 1: Opposite Tacks (Rule 10)
+                        else if (b1.tack !== b2.tack) {
+                            // Starboard (-1) vs Port (1)
+                            if (b1.tack === -1 && b2.tack === 1) {
+                                dsqBoat(b2, "You were on Port! Starboard has right of way."); 
+                            } else if (b1.tack === 1 && b2.tack === -1) {
+                                dsqBoat(b1, "You were on Port! Starboard has right of way."); 
+                            }
+                        } 
+                        // Case 2: Same Tack
+                        else {
+                            // Check Clear Astern
+                            // Is b1 Clear Astern of b2?
+                            if (isClearAstern(b1, b2)) {
+                                dsqBoat(b1, "You hit them from behind! (Clear Astern)");
+                            }
+                            // Is b2 Clear Astern of b1?
+                            else if (isClearAstern(b2, b1)) {
+                                dsqBoat(b2, "You hit them from behind! (Clear Astern)");
+                            }
+                            // Overlap -> Windward keeps clear
+                            else {
+                                // Rotate positions to align with wind (Wind from Top = 0)
+                                // Wind Direction 0 means wind comes from Top (0, -1 vector?) No, Arrow points Down.
+                                // Code uses windDirection as rotation.
+                                // If we rotate by -windDirection, wind is from Top (North).
+                                
+                                const x1 = b1.x * Math.cos(-windDirection) - b1.y * Math.sin(-windDirection);
+                                const x2 = b2.x * Math.cos(-windDirection) - b2.y * Math.sin(-windDirection);
+                                
+                                // Starboard Tack (-1): Wind from Right. Windward is Max X.
+                                if (b1.tack === -1) {
+                                    if (x1 > x2) dsqBoat(b1, "You were Windward! (Rule 11)");
+                                    else dsqBoat(b2, "You were Windward! (Rule 11)");
+                                }
+                                // Port Tack (1): Wind from Left. Windward is Min X.
+                                else {
+                                    if (x1 < x2) dsqBoat(b1, "You were Windward! (Rule 11)");
+                                    else dsqBoat(b2, "You were Windward! (Rule 11)");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    }
 
         function drawWindArrow(ctx) {
             // Draw a big arrow at the top center indicating wind from top
@@ -1263,6 +1813,7 @@
             // Update Boats only if playing or starting (for AI positioning/user mistakes)
             if (gameState === 'playing' || gameState === 'race_on') {
                 boats.forEach(boat => boat.update());
+                checkCollisions();
                 
                 // Check if all boats finished to stop loop logic? 
                 // Or just keep running. 
