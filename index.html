@@ -67,6 +67,19 @@
             width: 100%;
             box-sizing: border-box;
         }
+        .sound-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 12px 0;
+        }
+        .sound-row input {
+            width: auto;
+            margin: 0;
+        }
+        .sound-row span {
+            color: white;
+        }
         #medal {
             display: none;
             position: absolute;
@@ -174,6 +187,11 @@
             <option value="russell">Russell (Hardest)</option>
         </select>
 
+        <label class="sound-row">
+            <input type="checkbox" id="opt-sound" checked>
+            <span>Sound</span>
+        </label>
+
         <br>
         <button id="save-btn">Save & Restart</button>
     </div>
@@ -208,6 +226,7 @@
         let BOAT_SPEED = 0.1; // Configurable
         let boatCount = 3; // Configurable
         let difficulty = 'matty'; // Configurable
+        let soundEnabled = true;
 
         const TACK_ANGLE_RAD = 40 * Math.PI / 180;
         
@@ -234,9 +253,264 @@
 
         // Gusts
         const gusts = [];
+        const ripples = [];
+        const confettiParticles = [];
+        const RIPPLE_COUNT = 100;
+        const CONFETTI_COUNT = 100;
+
         const GUST_SPAWN_CHANCE = 0.005; // Much less frequent
         const GUST_MOVE_SPEED = 0.3;
         
+        // Sound Manager
+        class SoundManager {
+            constructor() {
+                this.ctx = null;
+                this.windGain = null;
+                this.isInit = false;
+            }
+
+            init() {
+                if (this.isInit) return;
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioContext();
+                this.isInit = true;
+                this.startWindNoise();
+            }
+
+            playStartBeep(freq = 440) {
+                if (!this.ctx || !soundEnabled) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.5);
+            }
+
+            playStartGun() {
+                if (!this.ctx || !soundEnabled) return;
+                const t = this.ctx.currentTime;
+                // Short bright beep — one sine, ~0.2s, no ramp
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(660, t);
+                gain.gain.setValueAtTime(0.4, t);
+                gain.gain.setValueAtTime(0.4, t + 0.15);
+                gain.gain.linearRampToValueAtTime(0, t + 0.2);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(t);
+                osc.stop(t + 0.2);
+            }
+
+            playTackSound() {
+                if (!this.ctx || !soundEnabled) return;
+                // White noise burst
+                const bufferSize = this.ctx.sampleRate * 0.2;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const gain = this.ctx.createGain();
+                // Filter to make it sound like fabric snapping
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 800;
+
+                gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start();
+            }
+
+            playSplashSound() {
+                if (!this.ctx || !soundEnabled) return;
+                // Similar to tack but softer/longer
+                 const bufferSize = this.ctx.sampleRate * 0.5;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const gain = this.ctx.createGain();
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 400;
+
+                gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+                
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start();
+            }
+
+            startWindNoise() {
+                if (!this.ctx) return;
+                // Continuous pink noise loop
+                const bufferSize = this.ctx.sampleRate * 2;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    const white = Math.random() * 2 - 1;
+                    data[i] = (lastOut + (0.02 * white)) / 1.02;
+                    lastOut = data[i];
+                    data[i] *= 3.5; 
+                }
+                // Pink noise approximation logic requires variable persistence, simplified here:
+                // Just use brownian-ish noise from above loop (lastOut)
+                
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                noise.loop = true;
+                
+                this.windGain = this.ctx.createGain();
+                this.windGain.gain.value = 0.05; // Base volume
+                
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = 400;
+
+                noise.connect(filter);
+                filter.connect(this.windGain);
+                this.windGain.connect(this.ctx.destination);
+                noise.start();
+            }
+
+            setWindVolume(vol) {
+                if (this.windGain) {
+                    const v = soundEnabled ? vol : 0;
+                    this.windGain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.1);
+                }
+            }
+        }
+        let lastOut = 0; // For noise generation
+        const sfx = new SoundManager();
+
+        class Ripple {
+            constructor() {
+                this.init();
+            }
+            
+            init() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.life = Math.random(); // 0 to 1
+                this.speed = Math.random() * 0.5 + 0.5;
+            }
+
+            update() {
+                // Move with windDirection
+                // WindDirection 0 = Wind from Top = Moves DOWN (Positive Y)
+                // Wait, if wind is FROM top, ripples move DOWN.
+                // Formula: x += sin(wind) * speed, y += cos(wind) * speed ??
+                // windDirection 0 (North): sin(0)=0, -cos(0)=-1 (UP). 
+                // But Wind FROM North blows TO South.
+                // So dy should be +1.
+                // dx = -sin(wind)
+                // dy = cos(wind)
+                // Let's check wind arrow logic: windDirection 0 -> arrow points down (PI). 
+                // So movement is PI rotation of "UP".
+                
+                // Wind Vector:
+                // From North (0) -> Vector (0, 1) [Down]
+                // From East (PI/2) -> Vector (-1, 0) [Left]
+                // From South (PI) -> Vector (0, -1) [Up]
+                
+                // x += -sin(windDir) * speed
+                // y += cos(windDir) * speed
+                
+                this.x -= Math.sin(windDirection) * this.speed * 2;
+                this.y += Math.cos(windDirection) * this.speed * 2;
+                
+                this.life -= 0.005;
+                if (this.life <= 0 || this.x < -50 || this.x > width + 50 || this.y < -50 || this.y > height + 50) {
+                    this.init();
+                    // Spawn at edge based on wind? Or just random is fine for "field" effect
+                    // Random is easier for continuous field
+                }
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(windDirection); // Rotate to match flow
+                
+                ctx.strokeStyle = `rgba(255, 255, 255, ${this.life * 0.2})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, -5);
+                ctx.lineTo(0, 5);
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+        }
+        
+        class Confetti {
+            constructor() {
+                this.reset(true);
+            }
+            
+            reset(startWait = false) {
+                this.x = width / 2;
+                this.y = height / 2;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 5 + 5;
+                this.vx = Math.sin(angle) * speed;
+                this.vy = Math.cos(angle) * speed;
+                this.gravity = 0.2;
+                this.friction = 0.98;
+                this.life = Math.random() * 100 + 100;
+                this.color = `hsl(${Math.random() * 360}, 100%, 50%)`;
+                this.rotation = Math.random() * 360;
+                this.rotationSpeed = (Math.random() - 0.5) * 10;
+                this.active = false;
+                if (!startWait) this.active = true;
+            }
+            
+            explode() {
+                this.reset(false);
+            }
+            
+            update() {
+                if (!this.active) return;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += this.gravity;
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                this.rotation += this.rotationSpeed;
+                this.life--;
+                if (this.life <= 0) this.active = false;
+            }
+            
+            draw(ctx) {
+                if (!this.active) return;
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation * Math.PI / 180);
+                ctx.fillStyle = this.color;
+                ctx.fillRect(-4, -4, 8, 8);
+                ctx.restore();
+            }
+        }
+
         class Gust {
             constructor() {
                 // Make size proportional to screen size
@@ -441,6 +715,7 @@
                         medalRank.innerText = "DNF";
                         medalMsg.innerText = "You hit a wall!";
                         medalEl.style.backgroundColor = '#ff4444'; // Red for crash
+                        sfx.playStartGun(); // Same beep as GO
                         return;
                     }
                 }
@@ -673,6 +948,15 @@
 
                 this.tack *= -1;
                 this.updateTargetHeading();
+                
+                // Audio for user or close boats? Just user + close ones maybe.
+                // For now, if user tacks or nearby
+                // Let's just play for user and maybe slightly quieter for others?
+                // Simplified: Play for user only to reduce chaos, or play for all with distance volume?
+                // Just user for clear feedback.
+                if (this.isUser) {
+                    sfx.playTackSound();
+                }
             }
         }
 
@@ -693,6 +977,7 @@
             optSpeed.value = BOAT_SPEED;
             optBoats.value = boatCount;
             optDiff.value = difficulty;
+            optSound.checked = soundEnabled;
             updateSettingsUI();
             settingsModal.style.display = 'block';
         }
@@ -700,6 +985,19 @@
         function resetGame() {
             boats.length = 0;
             gusts.length = 0;
+            
+            // Init Ripples if empty
+            if (ripples.length === 0) {
+                for(let i=0; i<RIPPLE_COUNT; i++) ripples.push(new Ripple());
+            }
+            // Init Confetti if empty
+            if (confettiParticles.length === 0) {
+                for(let i=0; i<CONFETTI_COUNT; i++) confettiParticles.push(new Confetti());
+            } else {
+                // Reset active state
+                confettiParticles.forEach(c => c.active = false);
+            }
+
             const startY = height - 50; // Start at bottom
             
             // Distribute boats
@@ -763,6 +1061,9 @@
                     winMsg += "\nWant a medal bro?";
                 }
                 medalMsg.innerText = winMsg;
+                
+                // Explode Confetti
+                confettiParticles.forEach(c => c.explode());
             } 
             else if (rank === "DNF") {
                  // Already handled by wall collision msg setting, but ensure safety
@@ -886,6 +1187,12 @@
             ctx.clearRect(0, 0, width, height);
 
             // Draw Background Elements
+            // Ripples first
+            ripples.forEach(r => {
+                r.update();
+                r.draw(ctx);
+            });
+            
             drawFinishLine(ctx);
             // drawStartLine(ctx); // Removed
             drawWindArrow(ctx);
@@ -915,6 +1222,22 @@
                     windTarget = newTarget;
                 }
             }
+            
+            // Audio: Modulate wind volume based on gusts/speed
+            // Check if user is inside a gust
+            let windVol = 0.05;
+            const userBoat = boats.find(b => b.isUser);
+            if (userBoat) {
+                for (const g of gusts) {
+                    if (g.active && 
+                        userBoat.x >= g.x && userBoat.x <= g.x + g.width &&
+                        userBoat.y >= g.y && userBoat.y <= g.y + g.height) {
+                        windVol = 0.15; // Louder in gust
+                        break;
+                    }
+                }
+            }
+            sfx.setWindVolume(windVol);
 
             // Gust Logic & Rendering (Draw under boats)
             if (gameState === 'playing' || gameState === 'race_on' || gameState === 'starting' || gameState === 'waiting') {
@@ -973,6 +1296,12 @@
 
             // Draw Boats
             boats.forEach(boat => boat.draw(ctx));
+            
+            // Draw Confetti
+            confettiParticles.forEach(c => {
+                c.update();
+                c.draw(ctx);
+            });
 
             requestAnimationFrame(gameLoop);
         }
@@ -988,6 +1317,7 @@
             startTimer = 3;
             startTimerEl.style.display = 'block';
             startTimerEl.innerText = startTimer;
+            sfx.playStartBeep(440);
             
             // Clear any existing interval
             if (startInterval) clearInterval(startInterval);
@@ -996,8 +1326,10 @@
                 startTimer--;
                 if (startTimer > 0) {
                     startTimerEl.innerText = startTimer;
+                    sfx.playStartBeep(440 + (3-startTimer)*100); // Pitch up
                 } else if (startTimer === 0) {
                     startTimerEl.innerText = "GO!";
+                    sfx.playStartGun();
                     gameState = 'race_on'; 
                     launchAI();
                 } else {
@@ -1022,6 +1354,8 @@
         // Update Boat.update to return if !this.moving
 
         function handleInput(e) {
+            sfx.init(); // Init audio context on first touch
+            
             if (gameState === 'waiting') {
                 startSequence();
             } 
@@ -1103,6 +1437,7 @@
         const optBoats = document.getElementById('opt-boats');
         const optBoatsVal = document.getElementById('opt-boats-val');
         const optDiff = document.getElementById('opt-diff');
+        const optSound = document.getElementById('opt-sound');
         const startTimerEl = document.getElementById('start-timer');
         const blackFlagMsg = document.getElementById('black-flag-msg');
 
@@ -1117,6 +1452,7 @@
             optSpeed.value = BOAT_SPEED;
             optBoats.value = boatCount;
             optDiff.value = difficulty;
+            optSound.checked = soundEnabled;
             updateSettingsUI();
             
             settingsModal.style.display = 'block';
@@ -1137,6 +1473,7 @@
             BOAT_SPEED = parseFloat(optSpeed.value);
             boatCount = parseInt(optBoats.value);
             difficulty = optDiff.value;
+            soundEnabled = optSound.checked;
 
             settingsModal.style.display = 'none';
             resetGame();
