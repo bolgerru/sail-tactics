@@ -261,6 +261,11 @@
         const GUST_SPAWN_CHANCE = 0.005; // Much less frequent
         const GUST_MOVE_SPEED = 0.3;
         
+        // Wind Shadow Constants
+        const SHADOW_LENGTH_MULT = 6; // Multiplier of radius (3 boat lengths approx)
+        const SHADOW_WIDTH_MULT = 3;  // Multiplier of radius (2 boat widths approx)
+        const MAX_SHADOW_PENALTY = 0.2; // 20% speed loss
+        
         // Sound Manager
         class SoundManager {
             constructor() {
@@ -755,6 +760,127 @@
                 });
             }
 
+            calculateShadowPenalty(allBoats) {
+                let totalPenalty = 0;
+                
+                const shadowLen = this.radius * SHADOW_LENGTH_MULT;
+                const shadowWid = this.radius * SHADOW_WIDTH_MULT;
+                
+                const windVx = Math.sin(windDirection);
+                const windVy = -Math.cos(windDirection); // Down is +Y in rotation if 0, but vector is (0,1) for downwind?
+                // Wait. WindDirection 0 means wind comes from Top. Blows Down.
+                // Vector (0, 1). 
+                // sin(0)=0. -cos(0)=-1. This would be (0, -1) [Up].
+                // So Wind Vector (Flow Direction) is (sin(w), cos(w))?
+                // If w=0, vector=(0,1) [Down]. Correct.
+                
+                // Stern Vector: Opposite to heading.
+                // Heading 0 = Up (0, -1). Stern = Down (0, 1).
+                // Heading vector: (sin(h), -cos(h)).
+                // Stern vector: (-sin(h), cos(h)).
+                
+                // But shadow direction needs to be calculated per boat that casts it!
+                // Wait, this method is called on the boat RECEIVING the penalty ("this").
+                // We iterate over "other" boats (the blockers).
+                // So we need the Shadow Vector of "other".
+                
+                for (const other of allBoats) {
+                    if (other === this || other.finished || other.dsq) continue;
+
+                    // Calculate Other Boat's Shadow Vector
+                    const wVx = Math.sin(windDirection); // Wind Flow (0 -> 0,1) NO. 
+                    // windDirection 0 (North) -> Blows South (0,1).
+                    // sin(0)=0. cos(0)=1. So vector is (sin(w), cos(w))?
+                    // if w=PI/2 (East wind, blows West). sin(PI/2)=1. cos=0. Vector (1,0) [Right].
+                    // But East wind blows TO West (-1, 0).
+                    // So Wind Flow Vector is (-sin(w), cos(w))?
+                    // Let's stick to using rotation logic which was robust in previous step.
+                    // Previous step: x' = dx * cos(-w) + dy * sin(-w).
+                    // This rotated everything so Wind came from Top (Vector 0,-1 in rotated space? or 0,1?)
+                    
+                    // Let's just compute the Average Angle.
+                    // Wind Angle (Flow): windDirection + PI (since windDir is where it comes FROM).
+                    // Actually windDirection 0 is "North". Wind FROM North blows South (PI).
+                    const windFlowAngle = windDirection + Math.PI;
+                    
+                    // Stern Angle: heading + PI.
+                    const sternAngle = other.heading + Math.PI;
+                    
+                    // Blend Vector
+                    // Wind Vector
+                    const wvX = Math.sin(windFlowAngle);
+                    const wvY = -Math.cos(windFlowAngle);
+                    
+                    // Stern Vector
+                    const svX = Math.sin(sternAngle);
+                    const svY = -Math.cos(sternAngle);
+                    
+                    // Average
+                    let shadowVx = wvX + svX;
+                    let shadowVy = wvY + svY;
+                    
+                    // Normalize (not strictly needed for atan2 but good practice)
+                    const mag = Math.hypot(shadowVx, shadowVy);
+                    if (mag > 0.001) {
+                         shadowVx /= mag;
+                         shadowVy /= mag;
+                    }
+                    
+                    const shadowAngle = Math.atan2(shadowVx, -shadowVy); // Convert back to bearing-ish
+                    
+                // But wait, atan2(x, -y) matches the canvas rotation logic where 0 is Up?
+                // canvas rotation: 0 = Up. +PI/2 = Right.
+                // standard atan2(y,x): 0 = Right.
+                // Let's trust the vector math. 
+                // shadowVx is X component. shadowVy is Y component (Up is -1).
+                // Angle = atan2(x, -y) gives 0 for (0, -1), PI for (0, 1).
+                
+                // Now rotate `this` (target) relative to `other` (source).
+                // We want to rotate the coordinate system so that the Shadow Vector aligns with Positive Y.
+                // If Shadow Vector is Down (PI), we want 0 rotation (since Y is Down).
+                // If Shadow Vector is Right (PI/2), we want -PI/2 rotation (so Y points Right).
+                // Formula: Rotation = shadowAngle - PI.
+                
+                const rotation = shadowAngle - Math.PI;
+                const cosS = Math.cos(-rotation);
+                const sinS = Math.sin(-rotation);
+                
+                // Rotate
+                const dx = this.x - other.x;
+                const dy = this.y - other.y;
+                
+                const rx = dx * cosS - dy * sinS;
+                const ry = dx * sinS + dy * cosS;
+                
+                // Now check ellipse logic (same as before)
+                    // Center of ellipse is at (0, shadowLen/2) in local space
+                    // We applied visual offset of -other.radius (shift up/forward).
+                    // So Center Y becomes (shadowLen/2) - other.radius.
+                    
+                    const yOffset = -other.radius;
+                    const centY = (shadowLen / 2) + yOffset;
+                    const radX = shadowWid / 2;
+                    const radY = shadowLen / 2;
+                    
+                    const distEq = ((rx * rx) / (radX * radX)) + ((ry - centY) * (ry - centY)) / (radY * radY);
+                    
+                    if (distEq <= 1) {
+                        // Inside Shadow
+                        // Penalty based on distance from START of shadow (which is at yOffset).
+                        // Dist along axis = ry - yOffset.
+                        let distAlong = ry - yOffset;
+                        
+                        let ratio = distAlong / shadowLen;
+                        if (ratio < 0) ratio = 0;
+                        if (ratio > 1) ratio = 1;
+                        totalPenalty += MAX_SHADOW_PENALTY * (1 - ratio);
+                    }
+                }
+                
+                if (totalPenalty > 0.4) totalPenalty = 0.4;
+                return totalPenalty;
+            }
+
             updateTargetHeading() {
                 // Target is relative to wind direction
                 this.targetHeading = windDirection + (this.tack * TACK_ANGLE_RAD);
@@ -826,6 +952,10 @@
                 // Cap max boost to 1.3x
                 if (speedMultiplier > 1.3) speedMultiplier = 1.3;
                 
+                // Wind Shadow Penalty
+                const shadowPenalty = this.calculateShadowPenalty(boats);
+                speedMultiplier *= (1.0 - shadowPenalty);
+
                 currentSpeed *= speedMultiplier;
 
                 this.x += Math.sin(this.heading) * currentSpeed;
@@ -1079,6 +1209,69 @@
             }
 
             draw(ctx) {
+                // Draw Wind Shadow (Debug/Visual)
+                
+                // Calculate Shadow Angle for Drawing
+                // Wind Flow Angle
+                const windFlowAngle = windDirection + Math.PI;
+                // Stern Angle
+                const sternAngle = this.heading + Math.PI;
+                
+                // Vectors
+                // Standard canvas angle 0 is Up (0,-1). 
+                // x = sin(a), y = -cos(a)
+                const wvX = Math.sin(windFlowAngle);
+                const wvY = -Math.cos(windFlowAngle);
+                
+                const svX = Math.sin(sternAngle);
+                const svY = -Math.cos(sternAngle);
+                
+                let sVx = wvX + svX;
+                let sVy = wvY + svY;
+                
+                 const mag = Math.hypot(sVx, sVy);
+                if (mag > 0.001) {
+                     sVx /= mag;
+                     sVy /= mag;
+                }
+                const shadowAngle = Math.atan2(sVx, -sVy);
+
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                
+                // Rotation = shadowAngle - PI to align Y+ with Vector
+                ctx.rotate(shadowAngle - Math.PI); 
+                
+                const sLen = this.radius * SHADOW_LENGTH_MULT;
+                const sWid = this.radius * SHADOW_WIDTH_MULT;
+                
+                // Draw Ellipse extending downwind
+                // Center at (0, sLen/2)
+                
+                // Offset start position to be slightly forward on the boat (e.g. at the mast/bow)
+                // In local space (before rotation), boat center is 0,0. Bow is (0, -radius).
+                // We want shadow to start near bow?
+                // Actually, current implementation centers ellipse at (0, sLen/2).
+                // This means the "top" of the ellipse is at (0, 0) -> Boat Center.
+                // To move it "forward" (towards bow/upwind relative to shadow flow), we shift the center NEGATIVE Y in rotated space.
+                // Shadow flows +Y. So shifting center -Y moves start point up.
+                // Let's shift it by -radius (to start at bow).
+                
+                const yOffset = -this.radius; 
+                
+                ctx.beginPath();
+                ctx.ellipse(0, (sLen/2) + yOffset, sWid/2, sLen/2, 0, 0, Math.PI * 2);
+                
+                // Gradient for visual feedback
+                // Gradient should also shift
+                const grd = ctx.createLinearGradient(0, yOffset, 0, sLen + yOffset);
+                grd.addColorStop(0, "rgba(0, 0, 0, 0)"); // Fully transparent (Invisible)
+                grd.addColorStop(1, "rgba(0, 0, 0, 0)");   // Fully transparent
+                
+                ctx.fillStyle = grd;
+                ctx.fill();
+                ctx.restore();
+
                 // Draw Wake (V-Shape from stern)
                 if (this.trail.length > 1) {
                     ctx.save();
@@ -1444,7 +1637,7 @@
             ctx.restore();
         }
 
-        function dsqBoat(boat, reason = "You were on Port! Starboard has right of way.") {
+        function dsqBoat(boat, reason = "Rule 10: Starboard has right of way.") {
             if (boat.dsq || boat.finished) return;
             
             if (boat.isUser) {
