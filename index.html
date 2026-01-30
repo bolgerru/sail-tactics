@@ -176,6 +176,23 @@
         <label>Number of Boats: <span id="opt-boats-val"></span></label>
         <input type="range" id="opt-boats" min="2" max="10" step="1">
 
+        <div id="advanced-settings" style="display:none; border: 1px dashed yellow; padding: 10px; margin: 10px 0;">
+            <h3 style="margin: 0 0 10px 0; color: yellow;">Advanced Override</h3>
+            <label>Custom Speed</label>
+            <input type="number" id="custom-speed" step="0.01" placeholder="0.1">
+            <label>Custom Boat Count</label>
+            <input type="number" id="custom-boats" placeholder="3">
+            <label>Boat Radius</label>
+            <input type="number" id="custom-radius" placeholder="15">
+            <label style="display:inline-block; margin-top:10px;">
+                <input type="checkbox" id="chaos-mode" style="width:auto; margin:0;"> Chaos Mode
+            </label>
+            <br>
+            <label style="display:inline-block;">
+                <input type="checkbox" id="god-mode" style="width:auto; margin:0;"> God Mode (Invincible)
+            </label>
+        </div>
+
         <label>Difficulty</label>
         <select id="opt-diff">
             <option value="matty">Matty (Easiest)</option>
@@ -227,6 +244,8 @@
         let boatCount = 3; // Configurable
         let difficulty = 'matty'; // Configurable
         let soundEnabled = true;
+        let BOAT_RADIUS = 15;
+        let GOD_MODE = false;
 
         const TACK_ANGLE_RAD = 40 * Math.PI / 180;
         
@@ -247,9 +266,9 @@
         let windDirection = 0; // 0 is from Top (North)
         let windTarget = 0;
         // Shift chance per frame (60fps). 0.005 is approx every 3.3s
-        const WIND_SHIFT_CHANCE = 0.005; 
+        let WIND_SHIFT_CHANCE = 0.005; 
         const MAX_WIND_DEVIATION = 30 * Math.PI / 180; // Clamp total deviation
-        const MAX_SHIFT = 20 * Math.PI / 180; // Max shift per event
+        let MAX_SHIFT = 20 * Math.PI / 180; // Max shift per event
 
         // Gusts
         const gusts = [];
@@ -584,7 +603,7 @@
                 this.tack = 1; // 1 or -1
                 this.updateTargetHeading();
                 this.heading = this.targetHeading; 
-                this.radius = 15;
+                this.radius = BOAT_RADIUS;
                 this.finished = false;
                 this.spinDir = Math.random() < 0.5 ? 1 : -1; // For Will mode
                 this.moving = false; // Waiting for start
@@ -1019,14 +1038,25 @@
 
                 if (hitWall) {
                     if (this.isUser) {
-                        // User DNF
-                        gameState = 'finished';
-                        medalEl.style.display = 'flex';
-                        medalRank.innerText = "DNF";
-                        medalMsg.innerText = "You hit a wall!";
-                        medalEl.style.backgroundColor = '#ff4444'; // Red for crash
-                        sfx.playStartGun(); 
-                        return;
+                        if (GOD_MODE) {
+                            // Bounce or just stop? Let's just stop movement component or do nothing (slide along)
+                            // If invincible, maybe we just slide. But the logic below is for DNF.
+                            // To allow sliding, we'd need to clamp position.
+                            // For now, let's just NOT trigger DNF.
+                            // But position will go out of bounds?
+                            // Let's bounce them back in slightly.
+                            if (this.x < 0) this.x = 1;
+                            if (this.x > width) this.x = width - 1;
+                        } else {
+                            // User DNF
+                            gameState = 'finished';
+                            medalEl.style.display = 'flex';
+                            medalRank.innerText = "DNF";
+                            medalMsg.innerText = "You hit a wall!";
+                            medalEl.style.backgroundColor = '#ff4444'; // Red for crash
+                            sfx.playStartGun(); 
+                            return;
+                        }
                     } else {
                         // AI DSQ
                         dsqBoat(this, "Hit the wall");
@@ -1641,6 +1671,7 @@
             if (boat.dsq || boat.finished) return;
             
             if (boat.isUser) {
+                if (GOD_MODE) return; // Invincible
                 gameState = 'finished';
                 medalEl.style.display = 'flex';
                 medalRank.innerText = "DSQ";
@@ -2198,8 +2229,14 @@
             optBoatsVal.innerText = optBoats.value;
         }
 
-        settingsBtn.addEventListener('mousedown', (e) => {
-            e.stopPropagation(); // Prevent game input
+        const advancedSettings = document.getElementById('advanced-settings');
+        const customSpeed = document.getElementById('custom-speed');
+        const customBoats = document.getElementById('custom-boats');
+        const customRadius = document.getElementById('custom-radius');
+        const chaosMode = document.getElementById('chaos-mode');
+        const godMode = document.getElementById('god-mode');
+
+        function openSettings(isAdvanced) {
             // Load current values
             optSpeed.value = BOAT_SPEED;
             optBoats.value = boatCount;
@@ -2207,23 +2244,116 @@
             optSound.checked = soundEnabled;
             updateSettingsUI();
             
+            // Reset custom inputs
+            customSpeed.value = '';
+            customBoats.value = '';
+            customRadius.value = '';
+            chaosMode.checked = false;
+            godMode.checked = false;
+
+            if (isAdvanced) {
+                advancedSettings.style.display = 'block';
+                customSpeed.value = BOAT_SPEED;
+                customBoats.value = boatCount;
+                customRadius.value = BOAT_RADIUS;
+                chaosMode.checked = (WIND_SHIFT_CHANCE > 0.01); // Simple check
+                godMode.checked = GOD_MODE;
+            } else {
+                advancedSettings.style.display = 'none';
+            }
+            
             settingsModal.style.display = 'block';
-        });
-        
-        // Also handle touch for button specifically if needed, but mousedown often covers it. 
-        // Let's add click just in case.
-        settingsBtn.addEventListener('click', (e) => {
+        }
+
+        let settingsTimer = null;
+        let longPressTriggered = false;
+
+        const startPress = (e) => {
             e.stopPropagation();
+            longPressTriggered = false;
+            settingsTimer = setTimeout(() => {
+                longPressTriggered = true;
+                openSettings(true);
+            }, 1000); // 1 second hold for advanced
+        };
+
+        const endPress = (e) => {
+            e.stopPropagation();
+            if (settingsTimer) {
+                clearTimeout(settingsTimer);
+                settingsTimer = null;
+            }
+            if (!longPressTriggered) {
+                openSettings(false);
+            }
+            longPressTriggered = false;
+        };
+
+        settingsBtn.addEventListener('mousedown', startPress);
+        settingsBtn.addEventListener('mouseup', endPress);
+        settingsBtn.addEventListener('mouseleave', (e) => {
+             // If mouse leaves button while holding, cancel
+             if (settingsTimer) {
+                clearTimeout(settingsTimer);
+                settingsTimer = null;
+                longPressTriggered = false;
+             }
         });
+
+        settingsBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault(); // prevent mouse emulation
+            startPress(e);
+        });
+        settingsBtn.addEventListener('touchend', endPress);
+        
+        settingsBtn.addEventListener('click', (e) => e.stopPropagation());
 
         optSpeed.addEventListener('input', updateSettingsUI);
         optBoats.addEventListener('input', updateSettingsUI);
 
         saveBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // Save values
-            BOAT_SPEED = parseFloat(optSpeed.value);
-            boatCount = parseInt(optBoats.value);
+            
+            // Check custom values first
+            if (advancedSettings.style.display === 'block') {
+                if (customSpeed.value && customSpeed.value.trim() !== "") {
+                    BOAT_SPEED = parseFloat(customSpeed.value);
+                } else {
+                    BOAT_SPEED = parseFloat(optSpeed.value);
+                }
+                
+                if (customBoats.value && customBoats.value.trim() !== "") {
+                    boatCount = parseInt(customBoats.value);
+                } else {
+                    boatCount = parseInt(optBoats.value);
+                }
+
+                if (customRadius.value && customRadius.value.trim() !== "") {
+                    BOAT_RADIUS = parseFloat(customRadius.value);
+                } else {
+                    BOAT_RADIUS = 15;
+                }
+
+                if (chaosMode.checked) {
+                    WIND_SHIFT_CHANCE = 0.05; // 10x normal
+                    MAX_SHIFT = 90 * Math.PI / 180; // 90 degree shifts
+                } else {
+                    WIND_SHIFT_CHANCE = 0.005;
+                    MAX_SHIFT = 20 * Math.PI / 180;
+                }
+
+                GOD_MODE = godMode.checked;
+
+            } else {
+                BOAT_SPEED = parseFloat(optSpeed.value);
+                boatCount = parseInt(optBoats.value);
+                // Reset defaults if not in advanced
+                BOAT_RADIUS = 15;
+                WIND_SHIFT_CHANCE = 0.005;
+                MAX_SHIFT = 20 * Math.PI / 180;
+                GOD_MODE = false;
+            }
+
             difficulty = optDiff.value;
             soundEnabled = optSound.checked;
 
