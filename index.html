@@ -1775,7 +1775,9 @@
                 
                 const scaleX = winW / logicalWidth;
                 const scaleY = winH / logicalHeight;
-                scale = Math.min(scaleX, scaleY);
+                // On mobile: fill screen (cover) so the box is bigger and uses more of the display
+                const isMobile = Math.min(winW, winH) <= 768;
+                scale = isMobile ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
             } else {
                 // Dynamic Map (Full Screen)
                 logicalWidth = winW;
