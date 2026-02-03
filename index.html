@@ -1769,15 +1769,13 @@
             canvas.height = winH;
 
             if (isMultiplayer) {
-                // Fixed Aspect Ratio / Resolution for fairness
+                // Fixed logical size; scale to fit so full course (top to bottom, side to side) is always visible
                 logicalWidth = LOGICAL_WIDTH_MP;
                 logicalHeight = LOGICAL_HEIGHT_MP;
                 
                 const scaleX = winW / logicalWidth;
                 const scaleY = winH / logicalHeight;
-                // On mobile: fill screen (cover) so the box is bigger and uses more of the display
-                const isMobile = Math.min(winW, winH) <= 768;
-                scale = isMobile ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+                scale = Math.min(scaleX, scaleY);
             } else {
                 // Dynamic Map (Full Screen)
                 logicalWidth = winW;
@@ -2478,6 +2476,10 @@
                 ctx.beginPath();
                 ctx.rect(0, 0, logicalWidth, logicalHeight);
                 ctx.clip();
+                
+                // Fill game area with sea so the whole screen is covered when using cover scale
+                ctx.fillStyle = "#0077be";
+                ctx.fillRect(0, 0, logicalWidth, logicalHeight);
                 
                 // Draw Border
                 ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
