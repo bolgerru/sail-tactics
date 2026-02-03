@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Sail Tactics Game</title>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -176,10 +177,23 @@
         <label>Number of Boats: <span id="opt-boats-val"></span></label>
         <input type="range" id="opt-boats" min="2" max="10" step="1">
 
+        <div id="multiplayer-section" style="border: 1px solid white; padding: 10px; margin: 10px 0; border-radius: 5px;">
+            <h3 style="margin: 0 0 10px 0;">Multiplayer (Max 10)</h3>
+            <div id="mp-menu">
+                <button id="mp-host-btn" style="width: 100%; margin-bottom: 5px;">Host Game</button>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="mp-join-id" placeholder="Enter Host ID" style="margin: 0;">
+                    <button id="mp-join-btn" style="width: auto;">Join</button>
+                </div>
+            </div>
+            <div id="mp-status" style="margin-top: 5px; font-size: 0.9rem; color: #aaa;">Status: Offline</div>
+            <div id="mp-id-display" style="display: none; margin-top: 5px; color: yellow; font-weight: bold;"></div>
+        </div>
+
         <div id="advanced-settings" style="display:none; border: 1px dashed yellow; padding: 10px; margin: 10px 0;">
             <h3 style="margin: 0 0 10px 0; color: yellow;">Advanced Override</h3>
             <label>Custom Speed</label>
-            <input type="number" id="custom-speed" step="0.01" placeholder="0.1">
+            <input type="number" id="custom-speed" step="0.01" placeholder="1.5">
             <label>Custom Boat Count</label>
             <input type="number" id="custom-boats" placeholder="3">
             <label>Boat Radius</label>
@@ -238,7 +252,18 @@
         const uiInstructions = document.getElementById('instructions');
 
         // Game State
-        let width, height;
+        // Logical Width/Height for Game World
+        const LOGICAL_WIDTH_MP = 400; // Fixed width for MP
+        const LOGICAL_HEIGHT_MP = 800; // Fixed height for MP
+        
+        // Dynamic variables (set in resize/reset)
+        let logicalWidth = 0; 
+        let logicalHeight = 0;
+        
+        let width = 0; // Canvas/Window width
+        let height = 0; // Canvas/Window height
+        let scale = 1;
+        
         const boats = [];
         let BOAT_SPEED = 0.1; // Configurable
         let boatCount = 3; // Configurable
@@ -280,6 +305,200 @@
         const GUST_SPAWN_CHANCE = 0.005; // Much less frequent
         const GUST_MOVE_SPEED = 0.3;
         
+        // Multiplayer Globals
+        let isMultiplayer = false;
+        let isHost = false;
+        let network = null;
+        let mpStatus = 'offline'; // offline, connecting, connected
+        const MAX_PLAYERS = 10;
+
+        // Network Manager
+        class NetworkManager {
+            constructor() {
+                this.peer = null;
+                this.connections = []; // List of all connections (for Host)
+                this.hostConn = null;  // Connection to Host (for Client)
+                this.myId = null;
+            }
+
+            init(id = null) {
+                const peerId = id || Math.random().toString(36).substr(2, 4).toUpperCase();
+                
+                this.peer = new Peer(peerId);
+
+                this.peer.on('open', (id) => {
+                    this.myId = id;
+                    updateMpStatus('Connected as: ' + id, 'green');
+                    if (isHost) {
+                        document.getElementById('mp-id-display').innerText = "ID: " + id;
+                        document.getElementById('mp-id-display').style.display = 'block';
+                    }
+                });
+
+                this.peer.on('connection', (conn) => {
+                    // Incoming connection (Host logic)
+                    if (this.connections.length >= MAX_PLAYERS - 1) {
+                        // Reject if full
+                        conn.close();
+                        return;
+                    }
+                    
+                    this.setupHostConnection(conn);
+                });
+
+                this.peer.on('error', (err) => {
+                    console.error(err);
+                    updateMpStatus('Error: ' + err.type, 'red');
+                });
+            }
+
+            connectTo(hostId) {
+                if (!this.peer) {
+                    this.init(); 
+                }
+                
+                if (this.peer.open) {
+                    this._performConnect(hostId);
+                } else {
+                    this.peer.on('open', () => {
+                        this._performConnect(hostId);
+                    });
+                }
+            }
+
+            _performConnect(hostId) {
+                if (this.hostConn) return; // Prevent duplicates
+
+                const conn = this.peer.connect(hostId);
+                this.hostConn = conn;
+                this.setupClientConnection();
+                updateMpStatus('Connecting to ' + hostId + '...', 'yellow');
+            }
+
+            setupHostConnection(conn) {
+                this.connections.push(conn);
+                
+                conn.on('open', () => {
+                    updateMpStatus(`Players: ${this.connections.length + 1}/${MAX_PLAYERS}`, 'lime');
+                    
+                    // Assign Player ID (Index in array + 1, since Host is 0)
+                    // We need a stable ID system. 
+                    // Let's use the connection's peer ID or just their index in list?
+                    // Index is risky if someone disconnects.
+                    // Better to assign a unique boat ID.
+                    
+                    // Send "Welcome" package with their assigned Boat ID
+                    // We'll assign boat ID based on connection order for now.
+                    // 0 is Host. 1..9 are Clients.
+                    const assignedId = this.connections.indexOf(conn) + 1;
+                    
+                    conn.send({ 
+                        type: 'welcome', 
+                        payload: { 
+                            id: assignedId,
+                            w: LOGICAL_WIDTH_MP, // Sync logical dimensions
+                            h: LOGICAL_HEIGHT_MP
+                        }
+                    });
+                    
+                    // Reset game if waiting? Or add boat dynamically?
+                    // Dynamic add is better for lobby feel.
+                    if (gameState === 'waiting') {
+                        resetGame();
+                    }
+                });
+
+                conn.on('data', (data) => {
+                    // Identify source by looking up conn in list
+                    const clientId = this.connections.indexOf(conn) + 1;
+                    this.handleHostData(data, clientId);
+                });
+
+                conn.on('close', () => {
+                    // Remove from list
+                    const index = this.connections.indexOf(conn);
+                    if (index > -1) {
+                        this.connections.splice(index, 1);
+                    }
+                    updateMpStatus(`Players: ${this.connections.length + 1}/${MAX_PLAYERS}`, 'lime');
+                    
+                    // If game waiting, reset to remove boat
+                    if (gameState === 'waiting') {
+                        resetGame();
+                    }
+                });
+            }
+
+            setupClientConnection() {
+                this.hostConn.on('open', () => {
+                    updateMpStatus('Connected to Host!', 'lime');
+                });
+
+                this.hostConn.on('data', (data) => {
+                    this.handleClientData(data);
+                });
+
+                this.hostConn.on('close', () => {
+                    updateMpStatus('Disconnected', 'red');
+                    this.hostConn = null;
+                    isMultiplayer = false;
+                });
+            }
+
+            broadcast(data) {
+                this.connections.forEach(conn => {
+                    if (conn.open) conn.send(data);
+                });
+            }
+
+            sendToHost(data) {
+                if (this.hostConn && this.hostConn.open) {
+                    this.hostConn.send(data);
+                }
+            }
+
+            handleHostData(data, clientId) {
+                if (data.type === 'tack') {
+                    // Client controls boat with id = clientId
+                    // Find boat with this ID
+                    const boat = boats.find(b => b.id === clientId);
+                    if (boat && !boat.finished && !boat.dnf) {
+                        boat.tackBoat();
+                    }
+                } else                 if (data.type === 'restart_request') {
+                    // Only restart if game is actually finished
+                    if (gameState === 'finished') {
+                        network.broadcast({ type: 'restart' });
+                        resetGame();
+                    }
+                } else if (data.type === 'start_request') {
+                    if (gameState === 'waiting') startSequence();
+                }
+            }
+
+            handleClientData(data) {
+                if (data.type === 'state') {
+                    applyWorldState(data.payload);
+                } else if (data.type === 'gust_spawn') {
+                     gusts.push(new Gust(data.payload));
+                } else if (data.type === 'welcome') {
+                    // Set my assigned ID
+                    myMultiplayerId = data.payload.id;
+                    // Also sync dimensions? We hardcoded them, but good to verify.
+                } else if (data.type === 'restart') {
+                    resetGame(); // Client side reset clears boats
+                }
+            }
+        }
+        
+        let myMultiplayerId = 0; // 0 for host, 1+ for clients
+
+        function updateMpStatus(msg, color='white') {
+            const el = document.getElementById('mp-status');
+            el.innerText = msg;
+            el.style.color = color;
+        }
+
         // Wind Shadow Constants
         const SHADOW_LENGTH_MULT = 6; // Multiplier of radius (3 boat lengths approx)
         const SHADOW_WIDTH_MULT = 3;  // Multiplier of radius (2 boat widths approx)
@@ -432,41 +651,20 @@
             }
             
             init() {
-                this.x = Math.random() * width;
-                this.y = Math.random() * height;
+                this.x = Math.random() * logicalWidth;
+                this.y = Math.random() * logicalHeight;
                 this.life = Math.random(); // 0 to 1
                 this.speed = Math.random() * 0.5 + 0.5;
             }
 
             update() {
                 // Move with windDirection
-                // WindDirection 0 = Wind from Top = Moves DOWN (Positive Y)
-                // Wait, if wind is FROM top, ripples move DOWN.
-                // Formula: x += sin(wind) * speed, y += cos(wind) * speed ??
-                // windDirection 0 (North): sin(0)=0, -cos(0)=-1 (UP). 
-                // But Wind FROM North blows TO South.
-                // So dy should be +1.
-                // dx = -sin(wind)
-                // dy = cos(wind)
-                // Let's check wind arrow logic: windDirection 0 -> arrow points down (PI). 
-                // So movement is PI rotation of "UP".
-                
-                // Wind Vector:
-                // From North (0) -> Vector (0, 1) [Down]
-                // From East (PI/2) -> Vector (-1, 0) [Left]
-                // From South (PI) -> Vector (0, -1) [Up]
-                
-                // x += -sin(windDir) * speed
-                // y += cos(windDir) * speed
-                
                 this.x -= Math.sin(windDirection) * this.speed * 2;
                 this.y += Math.cos(windDirection) * this.speed * 2;
                 
                 this.life -= 0.005;
-                if (this.life <= 0 || this.x < -50 || this.x > width + 50 || this.y < -50 || this.y > height + 50) {
+                if (this.life <= 0 || this.x < -50 || this.x > logicalWidth + 50 || this.y < -50 || this.y > logicalHeight + 50) {
                     this.init();
-                    // Spawn at edge based on wind? Or just random is fine for "field" effect
-                    // Random is easier for continuous field
                 }
             }
 
@@ -492,8 +690,8 @@
             }
             
             reset(startWait = false) {
-                this.x = width / 2;
-                this.y = height / 2;
+                this.x = logicalWidth / 2;
+                this.y = logicalHeight / 2;
                 const angle = Math.random() * Math.PI * 2;
                 const speed = Math.random() * 5 + 5;
                 this.vx = Math.sin(angle) * speed;
@@ -536,27 +734,36 @@
         }
 
         class Gust {
-            constructor() {
-                // Make size proportional to screen size
-                // Width: 25% to 40% of screen width
-                const minW = width * 0.25;
-                const varW = width * 0.15;
-                this.width = Math.random() * varW + minW;
-                
-                // Height: 20% to 40% of screen height
-                const minH = height * 0.2;
-                const varH = height * 0.2;
-                this.height = Math.random() * varH + minH;
-
-                this.x = Math.random() * (width - this.width);
-                this.y = -this.height; // Start above screen
-                this.strength = Math.random() * 0.2 + 1.1; // Reduced: 1.1x to 1.3x speed boost
-                this.active = true;
+            constructor(data = null) {
+                if (data) {
+                    this.width = data.w;
+                    this.height = data.h;
+                    this.x = data.x;
+                    this.y = data.y;
+                    this.strength = data.s;
+                    this.active = true;
+                } else {
+                    // Make size proportional to screen size
+                    // Width: 25% to 40% of screen width
+                    const minW = logicalWidth * 0.25;
+                    const varW = logicalWidth * 0.15;
+                    this.width = Math.random() * varW + minW;
+                    
+                    // Height: 20% to 40% of screen height
+                    const minH = logicalHeight * 0.2;
+                    const varH = logicalHeight * 0.2;
+                    this.height = Math.random() * varH + minH;
+    
+                    this.x = Math.random() * (logicalWidth - this.width);
+                    this.y = -this.height; // Start above screen
+                    this.strength = Math.random() * 0.2 + 1.1; // Reduced: 1.1x to 1.3x speed boost
+                    this.active = true;
+                }
             }
 
             update() {
                 this.y += GUST_MOVE_SPEED;
-                if (this.y > height) {
+                if (this.y > logicalHeight) {
                     this.active = false;
                 }
             }
@@ -596,15 +803,17 @@
         }
 
         class Boat {
-            constructor(x, y, isUser = false) {
+            constructor(x, y, isUser = false, id = null) {
                 this.x = x;
                 this.y = y;
-                this.isUser = isUser;
+                this.isUser = isUser; // Locally true if controlled by this player
+                this.id = id; // 0 for Host, 1 for Client
                 this.tack = 1; // 1 or -1
                 this.updateTargetHeading();
                 this.heading = this.targetHeading; 
                 this.radius = BOAT_RADIUS;
                 this.finished = false;
+                this.dnf = false; // New: Did Not Finish (Crashed)
                 this.spinDir = Math.random() < 0.5 ? 1 : -1; // For Will mode
                 this.moving = false; // Waiting for start
                 this.trail = []; // Wake trail
@@ -614,6 +823,7 @@
                 this.hailingTarget = null;
                 this.hailedBy = null;
                 this.hailTimer = 0;
+                this.finishRank = 0; // Rank when finished
             }
 
             findTackBlocker() {
@@ -1030,7 +1240,7 @@
                 const poly = this.getPolygon();
                 let hitWall = false;
                 for (const p of poly) {
-                    if (p.x < 0 || p.x > width) {
+                    if (p.x < 0 || p.x > logicalWidth) {
                         hitWall = true;
                         break;
                     }
@@ -1046,15 +1256,32 @@
                             // But position will go out of bounds?
                             // Let's bounce them back in slightly.
                             if (this.x < 0) this.x = 1;
-                            if (this.x > width) this.x = width - 1;
+                            if (this.x > logicalWidth) this.x = logicalWidth - 1;
                         } else {
                             // User DNF
-                            gameState = 'finished';
+                            // Don't stop game immediately!
+                            this.dnf = true;
+                            this.moving = false; // Stop boat
+                            
+                            // Show Medal Locally
                             medalEl.style.display = 'flex';
                             medalRank.innerText = "DNF";
                             medalMsg.innerText = "You hit a wall!";
+                            
+                            // Update text if MP
+                            if (isMultiplayer) {
+                                medalMsg.innerText += "\nWaiting for others...";
+                            }
+                            
                             medalEl.style.backgroundColor = '#ff4444'; // Red for crash
                             sfx.playStartGun(); 
+                            
+                            if (!isMultiplayer) {
+                                gameState = 'finished';
+                            } else {
+                                // Check if race over (Host side logic handles this in loop)
+                            }
+                            
                             return;
                         }
                     } else {
@@ -1067,7 +1294,7 @@
                     // User Auto-Hail Logic
                     // Check if approaching wall and blocked
                     const margin = 50;
-                    if ((this.x < margin && this.tack === -1) || (this.x > width - margin && this.tack === 1)) {
+                    if ((this.x < margin && this.tack === -1) || (this.x > logicalWidth - margin && this.tack === 1)) {
                         const blocker = this.findTackBlocker();
                         if (blocker) {
                              this.initiateHail(blocker);
@@ -1076,7 +1303,7 @@
                 }
 
                 // AI Tacking Logic
-                if (!this.isUser && difficulty !== 'will') {
+                if (!this.isUser && difficulty !== 'will' && !isMultiplayer) {
                     const margin = 50;
                     const criticalMargin = 20;
                     
@@ -1086,10 +1313,10 @@
                     // 1. Boundary Avoidance (High Priority)
                     // Use this.tack to determine intent, not current heading.
                     if (this.x < margin && this.tack === -1) urgentTack = true;
-                    else if (this.x > width - margin && this.tack === 1) urgentTack = true;
+                    else if (this.x > logicalWidth - margin && this.tack === 1) urgentTack = true;
                     
                     if (this.x < criticalMargin && this.tack === -1) isCritical = true;
-                    else if (this.x > width - criticalMargin && this.tack === 1) isCritical = true;
+                    else if (this.x > logicalWidth - criticalMargin && this.tack === 1) isCritical = true;
 
                     // 2. Collision Avoidance (Port vs Starboard)
                     // If on Port Tack (1), yield to Starboard Tack (-1)
@@ -1178,7 +1405,7 @@
                             if (Math.random() < reactionChance) {
                                 // Check if tacking hits wall
                                 const futureTack = this.tack * -1;
-                                if ((this.x < margin && futureTack === -1) || (this.x > width - margin && futureTack === 1)) {
+                                if ((this.x < margin && futureTack === -1) || (this.x > logicalWidth - margin && futureTack === 1)) {
                                     // Unsafe
                                 } else {
                                     // Check blocker first!
@@ -1193,7 +1420,7 @@
                                  // Wind from left, currently heading Left. Should tack to Right.
                                  if (Math.random() < reactionChance) {
                                      const futureTack = 1; // Right
-                                     if (this.x > width - margin) { /* Unsafe */ } 
+                                     if (this.x > logicalWidth - margin) { /* Unsafe */ } 
                                      else if (!this.findTackBlocker()) this.tackBoat();
                                  }
                             } else if (windDirection > windThreshold && this.tack === 1) {
@@ -1226,9 +1453,10 @@
                 if (finished) {
                     this.finished = true;
                     finishedBoatsCount++;
+                    this.finishRank = finishedBoatsCount;
                     
                     if (this.isUser) {
-                        let rank = finishedBoatsCount;
+                        let rank = this.finishRank;
                         let suffix = 'th';
                         if (rank === 1) suffix = 'st';
                         else if (rank === 2) suffix = 'nd';
@@ -1443,6 +1671,9 @@
                     ctx.restore();
                 }
 
+                // Update Luff Timer (Always update for visuals, even if paused)
+                this.luffTimer += 0.5;
+
                 // Draw Hailing Bubble
                 if (this.hailingTarget) {
                     ctx.save();
@@ -1462,16 +1693,47 @@
                 // Draw Warning if Hailed (for User)
                 if (this.isUser && this.hailedBy) {
                     ctx.save();
-                    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform to draw absolute
-                    ctx.fillStyle = '#ff4444';
-                    ctx.strokeStyle = 'white';
-                    ctx.lineWidth = 2;
-                    ctx.font = 'bold 24px sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.shadowColor = 'black';
-                    ctx.shadowBlur = 4;
-                    ctx.fillText("TACK NOW!", width/2, height/2 - 50);
-                    ctx.strokeText("TACK NOW!", width/2, height/2 - 50);
+                    
+                    if (isMultiplayer) {
+                        // Reset transform logic relative to MP scaling
+                        // Actually easier: just draw in local coordinates (rotated/translated boat space)
+                        // But text needs to be upright.
+                        
+                        // We are in boat space (translated, rotated).
+                        // To draw screen-aligned text centered on boat:
+                        // Rotate back by -this.heading
+                        ctx.rotate(-this.heading);
+                        // Draw above boat
+                    } else {
+                        // Dynamic Map (old logic using absolute coords)
+                        ctx.setTransform(1, 0, 0, 1, 0, 0); 
+                    }
+                    
+                    if (isMultiplayer) {
+                        // Drawing in local space (upright)
+                        ctx.fillStyle = '#ff4444';
+                        ctx.strokeStyle = 'white';
+                        ctx.lineWidth = 2 / scale; // Scale line width back
+                        ctx.font = `bold ${24/scale}px sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.shadowColor = 'black';
+                        ctx.shadowBlur = 4;
+                        // Draw "TACK NOW" slightly above/below boat
+                        ctx.fillText("TACK NOW!", 0, -this.radius * 3);
+                        ctx.strokeText("TACK NOW!", 0, -this.radius * 3);
+                    } else {
+                        // Old Absolute Logic
+                        ctx.fillStyle = '#ff4444';
+                        ctx.strokeStyle = 'white';
+                        ctx.lineWidth = 2;
+                        ctx.font = 'bold 24px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.shadowColor = 'black';
+                        ctx.shadowBlur = 4;
+                        ctx.fillText("TACK NOW!", width/2, height/2 - 50);
+                        ctx.strokeText("TACK NOW!", width/2, height/2 - 50);
+                    }
+                    
                     ctx.restore();
                 }
 
@@ -1497,10 +1759,29 @@
         }
 
         function resize() {
-            width = window.innerWidth;
-            height = window.innerHeight;
-            canvas.width = width;
-            canvas.height = height;
+            // Screen Dimensions
+            const winW = window.innerWidth;
+            const winH = window.innerHeight;
+            
+            width = winW;
+            height = winH;
+            canvas.width = winW;
+            canvas.height = winH;
+
+            if (isMultiplayer) {
+                // Fixed Aspect Ratio / Resolution for fairness
+                logicalWidth = LOGICAL_WIDTH_MP;
+                logicalHeight = LOGICAL_HEIGHT_MP;
+                
+                const scaleX = winW / logicalWidth;
+                const scaleY = winH / logicalHeight;
+                scale = Math.min(scaleX, scaleY);
+            } else {
+                // Dynamic Map (Full Screen)
+                logicalWidth = winW;
+                logicalHeight = winH;
+                scale = 1;
+            }
         }
 
         function init() {
@@ -1519,6 +1800,10 @@
         }
 
         function resetGame() {
+            if (isMultiplayer && isHost && network) {
+                 network.broadcast({ type: 'restart' });
+            }
+
             boats.length = 0;
             gusts.length = 0;
             
@@ -1534,17 +1819,17 @@
                 confettiParticles.forEach(c => c.active = false);
             }
 
-            const startY = height - 50; // Start at bottom
+            const startY = logicalHeight - 50; // Start at bottom
             
             // Distribute boats
-            const userIndex = Math.floor(boatCount / 2);
+            // const userIndex = Math.floor(boatCount / 2); // Unused in MP usually, but useful for single player
             
             // Available width for boats (keep margins)
-            const margin = Math.min(width * 0.1, 50);
-            const availableWidth = width - (2 * margin);
+            const margin = Math.min(logicalWidth * 0.1, 50);
+            const availableWidth = logicalWidth - (2 * margin);
             // If only 1 boat (shouldn't happen with min 2), center it.
             // If > 1, spacing = width / (count - 1)
-            const step = boatCount > 1 ? availableWidth / (boatCount - 1) : 0;
+            // const step = boatCount > 1 ? availableWidth / (boatCount - 1) : 0; // Recalc below
 
             // Reset Wind
             windDirection = 0;
@@ -1552,13 +1837,52 @@
             
             finishedBoatsCount = 0;
 
-            for (let i = 0; i < boatCount; i++) {
-                const x = boatCount > 1 ? margin + (i * step) : width / 2;
-                boats.push(new Boat(x, startY, i === userIndex));
+            if (isMultiplayer) {
+                // Multiplayer Setup: Up to MAX_PLAYERS
+                // Host is Boat 0. Connected Clients are Boat 1..N
+                // Determine total players
+                const totalPlayers = (network && isHost) ? network.connections.length + 1 : 
+                                     (network && !isHost) ? 0 : 2; // Client doesn't spawn initially, waits for state?
+                
+                // Actually, Client should wait for state to spawn boats.
+                // Host spawns all boats.
+                
+                if (isHost) {
+                    boatCount = totalPlayers;
+                    // Distribute across line
+                    const step = boatCount > 1 ? availableWidth / (boatCount - 1) : 0;
+                    
+                    for(let i=0; i<boatCount; i++) {
+                        const x = boatCount > 1 ? margin + (i * step) : logicalWidth / 2;
+                        // Boat ID matches player index
+                        boats.push(new Boat(x, startY, (i === 0), i));
+                    }
+                } else {
+                    // Client: Don't spawn anything yet. Wait for 'state' packet.
+                    // Or spawn placeholders?
+                    // 'state' packet will arrive and `applyWorldState` will create/update boats.
+                    // But `applyWorldState` currently expects boats to exist to update them.
+                    // We need to upgrade `applyWorldState` to create boats if missing.
+                }
+                
+            } else {
+                // Single Player
+                const userIndex = Math.floor(boatCount / 2);
+                const step = boatCount > 1 ? availableWidth / (boatCount - 1) : 0;
+                for (let i = 0; i < boatCount; i++) {
+                    const x = boatCount > 1 ? margin + (i * step) : logicalWidth / 2;
+                    boats.push(new Boat(x, startY, i === userIndex));
+                }
             }
 
             gameState = 'waiting';
-            uiInstructions.innerText = "Tap to Start Sequence";
+            
+            if (isMultiplayer && !isHost) {
+                 uiInstructions.innerText = "Waiting for Host to Start...";
+            } else {
+                 uiInstructions.innerText = "Tap to Start Sequence";
+            }
+
             medalEl.style.display = 'none'; // Hide medal
             blackFlagMsg.style.display = 'none'; // Hide BF
             
@@ -1568,7 +1892,11 @@
         }
 
         function endGame(rank, suffix) {
-            gameState = 'finished';
+            // Check if game should end
+            if (!isMultiplayer) {
+                gameState = 'finished';
+            }
+            
             uiInstructions.innerText = ""; // Clear bottom text
             redFlagMsg.style.display = 'none'; // Hide Eunice
             
@@ -1590,14 +1918,16 @@
             
             // Special message for 1st place
             if (rank === 1) {
-                // Capitalize difficulty name
-                const diffName = difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
-                let winMsg = `Congrats! You beat ${diffName}!`;
-                if (difficulty === 'matty') {
-                    winMsg += "\nWant a medal bro?";
+                if (isMultiplayer) {
+                    medalMsg.innerText = "1st place!";
+                } else {
+                    const diffName = difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+                    let winMsg = `Congrats! You beat ${diffName}!`;
+                    if (difficulty === 'matty') {
+                        winMsg += "\nWant a medal bro?";
+                    }
+                    medalMsg.innerText = winMsg;
                 }
-                medalMsg.innerText = winMsg;
-                
                 // Explode Confetti
                 confettiParticles.forEach(c => c.explode());
             } 
@@ -1606,6 +1936,10 @@
             }
             else {
                 medalMsg.innerText = "Unlucky pal, stick to college work";
+            }
+            
+            if (isMultiplayer && gameState !== 'finished') {
+                medalMsg.innerText += "\nWaiting for others...";
             }
         }
 
@@ -1670,18 +2004,28 @@
         function dsqBoat(boat, reason = "Rule 10: Starboard has right of way.") {
             if (boat.dsq || boat.finished) return;
             
+            // Apply DSQ state locally first (for Host)
+            boat.dsq = true;
+            boat.moving = false;
+            boat.dsqReason = reason; // Store reason for syncing
+
             if (boat.isUser) {
-                if (GOD_MODE) return; // Invincible
-                gameState = 'finished';
+                if (GOD_MODE) {
+                     boat.dsq = false;
+                     boat.moving = true;
+                     return; 
+                }
+                if (!isMultiplayer) gameState = 'finished';
                 medalEl.style.display = 'flex';
                 medalRank.innerText = "DSQ";
                 medalMsg.innerText = reason;
                 medalEl.style.backgroundColor = '#ff4444'; 
                 sfx.playStartGun();
-            } else {
-                boat.dsq = true;
-                boat.moving = false;
-            }
+                
+                if (isMultiplayer) {
+                    medalMsg.innerText += "\nWaiting for others...";
+                }
+            } 
         }
 
         function polygonsIntersect(a, b) {
@@ -1857,7 +2201,7 @@
 
         function drawWindArrow(ctx) {
             // Draw a big arrow at the top center indicating wind from top
-            const x = width / 2; // Center horizontally
+            const x = logicalWidth / 2; // Center horizontally
             const y = 60; // Slightly down from top
             const arrowLen = 40;
             
@@ -1931,21 +2275,21 @@
             if (gameState !== 'starting' && gameState !== 'waiting') return;
             
             // Draw a line near bottom where boats should stay behind
-            const lineY = height - 100; // 50px above startY usually
+            const lineY = logicalHeight - 100; // 50px above startY usually
             
             ctx.strokeStyle = '#ffff00';
             ctx.lineWidth = 4;
             ctx.setLineDash([10, 10]); 
             ctx.beginPath();
             ctx.moveTo(0, lineY);
-            ctx.lineTo(width, lineY);
+            ctx.lineTo(logicalWidth, lineY);
             ctx.stroke();
             ctx.setLineDash([]); 
 
             ctx.fillStyle = '#ffff00';
             ctx.textAlign = 'right';
             ctx.font = 'bold 16px sans-serif';
-            ctx.fillText("START LINE", width - 20, lineY - 10);
+            ctx.fillText("START LINE", logicalWidth - 20, lineY - 10);
         }
 
         function drawFinishLine(ctx) {
@@ -1954,7 +2298,7 @@
             ctx.setLineDash([20, 20]); // Dashed line
             ctx.beginPath();
             ctx.moveTo(0, FINISH_LINE_Y);
-            ctx.lineTo(width, FINISH_LINE_Y);
+            ctx.lineTo(logicalWidth, FINISH_LINE_Y);
             ctx.stroke();
             ctx.setLineDash([]); // Reset
 
@@ -1962,11 +2306,185 @@
             ctx.fillStyle = '#ff4444';
             ctx.textAlign = 'right';
             ctx.font = 'bold 20px sans-serif';
-            ctx.fillText("FINISH", width - 20, FINISH_LINE_Y - 10);
+            ctx.fillText("FINISH", logicalWidth - 20, FINISH_LINE_Y - 10);
+        }
+
+        function applyWorldState(state) {
+            // Update Global Vars
+            windDirection = state.wind;
+            
+            // Sync Game State
+            if (gameState !== state.gs) {
+                gameState = state.gs;
+                if (gameState === 'race_on') {
+                    startTimerEl.innerText = "GO!";
+                    // Host sets display none after "GO!".
+                }
+                else if (gameState === 'finished') {
+                    // Update Medal Text if shown
+                    if (medalEl.style.display === 'flex') {
+                        // Keep current message but append Restart instruction?
+                        // Or simple "Tap to Restart" button becomes active?
+                        // Just refreshing the text if it contained "Waiting..."
+                        const currentMsg = medalMsg.innerText;
+                        if (currentMsg.includes("Waiting for others...")) {
+                            if (isHost) {
+                                medalMsg.innerText = currentMsg.replace("Waiting for others...", "Tap to Restart");
+                            } else {
+                                medalMsg.innerText = currentMsg.replace("Waiting for others...", "Waiting for Host to Restart...");
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Sync Timer UI
+            if (gameState === 'starting') {
+                 // Clear waiting message
+                 if (uiInstructions.innerText.includes("Waiting")) uiInstructions.innerText = "";
+                 
+                 startTimerEl.style.display = 'block';
+                 startTimerEl.innerText = state.time;
+            } else if (gameState === 'race_on') {
+                 startTimerEl.innerText = "GO!";
+            } else if (gameState === 'playing') {
+                 startTimerEl.style.display = 'none';
+            }
+
+            // Sync Boats
+            // Handle dynamic boat count (Client side)
+            // If boat count mismatch, rebuild array? Or add/remove?
+            // Rebuilding is easiest but trails might flicker. 
+            // Better to update existing and add missing.
+            
+            // Mark all current boats as unseen
+            const seenIds = new Set();
+            
+            state.boats.forEach(bData => {
+                let boat = boats.find(b => b.id === bData.id);
+                if (!boat) {
+                    // New boat!
+                    // Determine if it is ME
+                    // My ID is stored in network.myId? No, that's Peer ID.
+                    // We need the assigned game ID.
+                    // We stored it in `myMultiplayerId`.
+                    const isMe = (bData.id === myMultiplayerId);
+                    boat = new Boat(bData.x, bData.y, isMe, bData.id);
+                    boats.push(boat);
+                }
+                
+                seenIds.add(bData.id);
+                
+                // Update properties
+                boat.x = bData.x;
+                boat.y = bData.y;
+                boat.heading = bData.h;
+                boat.targetHeading = bData.th || bData.h; // Sync Target Heading
+                boat.tack = bData.t;
+                
+                // Check if JUST finished (Client Side Event)
+                if (!boat.finished && bData.f) {
+                     boat.finishRank = bData.fr; // Update rank
+                     if (boat.isUser) {
+                        let rank = boat.finishRank;
+                        let suffix = 'th';
+                        if (rank === 1) suffix = 'st';
+                        else if (rank === 2) suffix = 'nd';
+                        else if (rank === 3) suffix = 'rd';
+                        endGame(rank, suffix);
+                     }
+                }
+                
+                // Check if JUST DSQ (Client Side Event) – don't set boat.dsq before dsqBoat or it returns early and no medal shows
+                if (!boat.dsq && bData.d) {
+                    boat.dsqReason = bData.dr;
+                    if (boat.isUser) {
+                        dsqBoat(boat, boat.dsqReason || "Disqualified by Referee");
+                    } else {
+                        boat.dsq = true;
+                        boat.moving = false;
+                    }
+                }
+
+                // Check if JUST DNF / wall crash (Client Side Event)
+                if (!boat.dnf && bData.dnf && (bData.id === myMultiplayerId)) {
+                    gameState = 'finished';
+                    medalEl.style.display = 'flex';
+                    medalRank.innerText = "DNF";
+                    medalMsg.innerText = "You hit a wall!";
+                    if (isMultiplayer) medalMsg.innerText += "\nWaiting for others...";
+                    medalEl.style.backgroundColor = '#ff4444';
+                }
+
+                boat.finished = bData.f;
+                boat.finishRank = bData.fr; // Ensure sync
+                boat.dsq = bData.d;
+                boat.dsqReason = bData.dr;
+                boat.dnf = bData.dnf;
+                // FORCE OWNERSHIP SYNC
+                // If myMultiplayerId is set, enforce it.
+                if (isMultiplayer && myMultiplayerId !== null) {
+                    boat.isUser = (bData.id === myMultiplayerId);
+                } else {
+                     boat.isUser = (bData.id === myMultiplayerId);
+                }
+            });
+            
+            // Remove boats that are gone (disconnected)
+            for (let i = boats.length - 1; i >= 0; i--) {
+                if (!seenIds.has(boats[i].id)) {
+                    boats.splice(i, 1);
+                }
+            }
+
+            // Sync Gusts (Full Replacement for exact sync)
+            if (state.gusts) {
+                // We can either try to match IDs or just replace the array.
+                // Replacing array is easiest but might flicker if not smooth?
+                // Actually, Gust objects are simple. 
+                // Let's replace gusts list with new objects from state.
+                
+                // Optimization: Reuse objects if count matches to avoid GC?
+                // For now, just rebuild. Gust count is low.
+                
+                gusts.length = 0;
+                state.gusts.forEach(gData => {
+                    gusts.push(new Gust(gData));
+                });
+            }
         }
 
         function gameLoop() {
-            ctx.clearRect(0, 0, width, height);
+            // Clear entire screen (physical)
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform for clear
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Background (Sea)
+            ctx.fillStyle = "#0077be";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Apply Scaling and Centering
+            ctx.save();
+            
+            if (isMultiplayer) {
+                const offsetX = (canvas.width - logicalWidth * scale) / 2;
+                const offsetY = (canvas.height - logicalHeight * scale) / 2;
+                ctx.translate(offsetX, offsetY);
+                ctx.scale(scale, scale);
+                
+                // Clip to Game Area
+                ctx.beginPath();
+                ctx.rect(0, 0, logicalWidth, logicalHeight);
+                ctx.clip();
+                
+                // Draw Border
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(0, 0, logicalWidth, logicalHeight);
+            } else {
+                // No scaling for single player (1:1 with screen)
+                // logicalWidth/Height = width/height
+            }
 
             // Draw Background Elements
             // Ripples first
@@ -2023,10 +2541,41 @@
 
             // Gust Logic & Rendering (Draw under boats)
             if (gameState === 'playing' || gameState === 'race_on' || gameState === 'starting' || gameState === 'waiting') {
-                // Spawn
-                if (gameState !== 'waiting' && Math.random() < GUST_SPAWN_CHANCE) {
-                    gusts.push(new Gust());
+                // Spawn (Only Host or Offline)
+                if (gameState !== 'waiting') {
+                     if (!isMultiplayer || isHost) {
+                        if (Math.random() < GUST_SPAWN_CHANCE) {
+                            const g = new Gust();
+                            gusts.push(g);
+                            // Broadcast New Gust
+                            if (isMultiplayer && network) {
+                                network.broadcast({ 
+                                    type: 'gust_spawn', 
+                                    payload: {
+                                        w: g.width,
+                                        h: g.height,
+                                        x: g.x,
+                                        y: g.y,
+                                        s: g.strength,
+                                        id: Math.random() 
+                                    }
+                                });
+                            }
+                        }
+                     }
                 }
+                
+                // CLIENT GUST SYNC: 
+                // If we are a client, we shouldn't rely solely on spawn events because of latency or missed packets.
+                // However, synchronizing full gust array is heavy.
+                // Let's add a periodic sync? Or just rely on spawn.
+                // The issue "gusts aren't exactly the same" suggests drift or missing spawn.
+                // Or simply that `update()` is running at different rates or times.
+                // Since `update()` is purely `y += speed`, if frame rates differ, positions differ.
+                // PeerJS is TCP-like (reliable ordered) so missing packets is less likely than timing drift.
+                
+                // Ideally, host sends Gust positions in the State packet.
+                // Let's add gusts to the `state` payload broadcast.
                 
                 // Update & Draw
                 for (let i = gusts.length - 1; i >= 0; i--) {
@@ -2043,13 +2592,56 @@
             }
 
             // Update Boats only if playing or starting (for AI positioning/user mistakes)
+            // CRITICAL: We also want to broadcast boat positions during 'waiting' phase so clients can see the lineup!
+            
             if (gameState === 'playing' || gameState === 'race_on') {
-                boats.forEach(boat => boat.update());
-                checkCollisions();
-                
-                // Check if all boats finished to stop loop logic? 
-                // Or just keep running. 
-            } else if (gameState === 'starting') {
+                if (!isMultiplayer || isHost) {
+                    boats.forEach(boat => boat.update());
+                    checkCollisions();
+                }
+            }
+            
+            // Host Broadcast (Always, if boats exist, to keep lobby synced)
+            if (isMultiplayer && isHost && network) {
+                // Check Race End Condition
+                if (gameState !== 'finished' && (gameState === 'playing' || gameState === 'race_on')) {
+                    const allDone = boats.every(b => b.finished || b.dsq || b.dnf);
+                    if (allDone && boats.length > 0) {
+                        gameState = 'finished';
+                    }
+                }
+
+                const state = {
+                    boats: boats.map(b => ({
+                        id: b.id,
+                        x: b.x,
+                        y: b.y,
+                            h: b.heading,
+                            th: b.targetHeading, // Sync Target Heading for turning logic
+                            t: b.tack,
+                            f: b.finished,
+                        fr: b.finishRank, // Sync Rank
+                        d: b.dsq,
+                        dr: b.dsqReason, // Sync Reason
+                        dnf: b.dnf // Send DNF state
+                    })),
+                    // Add Gusts to State for exact sync
+                    gusts: gusts.map(g => ({
+                        x: g.x,
+                        y: g.y,
+                        w: g.width,
+                        h: g.height,
+                        s: g.strength
+                    })),
+                    wind: windDirection,
+                    time: startTimer,
+                    gs: gameState
+                };
+                network.broadcast({ type: 'state', payload: state });
+            }
+            
+            // Input logic remains...
+            if (gameState === 'starting') {
                 // Allow movement but check black flag
                 // Actually, boats should stay still until tapped in previous logic. 
                 // Now, user taps to start TIMER.
@@ -2085,6 +2677,23 @@
                 c.update();
                 c.draw(ctx);
             });
+            
+            if (isMultiplayer) {
+                ctx.restore(); // Restore from Game Area Scale/Clip
+            } else {
+                ctx.restore(); // Restore from save() at start of Apply Scaling (even if empty)
+            }
+
+            // Draw UI Elements (Absolute Screen Coordinates if needed, or keeping them in game area)
+            // UI like "GO!" or Medals are HTML overlay, so they handle themselves via CSS.
+            // But we might want to center the HTML elements to the game area?
+            // HTML elements are currently centered to window (50% left/top).
+            // This is fine, they will overlay the game area correctly if it's also centered.
+            
+            // Wait, UI instructions like "Tap to Start" are HTML.
+            // Medal is HTML.
+            // Start Timer is HTML.
+            // Canvas drawings (Wind Arrow, Lines) are inside scale. OK.
 
             requestAnimationFrame(gameLoop);
         }
@@ -2119,15 +2728,21 @@
                     // Timer finished (negative), game is officially playable if not already
                     clearInterval(startInterval);
                     startTimerEl.style.display = 'none';
+                    gameState = 'playing'; // So clients receive gs: 'playing' and hide "GO!" too
                 }
             }, 1000);
         }
 
         function launchAI() {
-            // Start all AI boats immediately
+            // Start all boats immediately
             boats.forEach(boat => {
-                if (!boat.isUser) {
+                if (isMultiplayer) {
                     boat.moving = true;
+                } else {
+                    // Single Player: Start AI boats
+                    if (!boat.isUser) {
+                        boat.moving = true;
+                    }
                 }
             });
         }
@@ -2136,11 +2751,42 @@
         // Update Boat constructor to include moving = false
         // Update Boat.update to return if !this.moving
 
+        // Input Handling Mapped to Logical Coordinates
+        function getLogicalPos(evt) {
+            const rect = canvas.getBoundingClientRect();
+            // Touch vs Mouse
+            const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+            const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+            
+            const physX = clientX - rect.left;
+            const physY = clientY - rect.top;
+            
+            // Inverse Scale/Translate
+            let logicalX, logicalY;
+            
+            if (isMultiplayer) {
+                const offsetX = (canvas.width - logicalWidth * scale) / 2;
+                const offsetY = (canvas.height - logicalHeight * scale) / 2;
+                logicalX = (physX - offsetX) / scale;
+                logicalY = (physY - offsetY) / scale;
+            } else {
+                logicalX = physX;
+                logicalY = physY;
+            }
+            
+            return { x: logicalX, y: logicalY };
+        }
+
         function handleInput(e) {
             sfx.init(); // Init audio context on first touch
             
             if (gameState === 'waiting') {
-                startSequence();
+                if (isMultiplayer && !isHost) {
+                    // Clients wait for host to start
+                    // Do nothing
+                } else {
+                    startSequence();
+                }
             } 
             else if (gameState === 'starting') {
                 // User tapped during countdown!
@@ -2177,24 +2823,58 @@
             }
             else if (gameState === 'race_on') {
                  // User tapped after GO disappeared (late start)
-                 gameState = 'playing';
-                 uiInstructions.innerText = "Tap to Tack";
-                 startTimerEl.style.display = 'none'; // Ensure timer is hidden
+                 // NOTE: In multiplayer, 'race_on' is the global state broadcast by host when timer ends.
+                 // Clients might be in 'race_on' state but haven't tapped locally yet.
                  
-                 const userBoat = boats.find(b => b.isUser);
-                 if (userBoat) {
-                     userBoat.moving = true;
-                 }
-                 
-                 if (difficulty === 'will') {
-                        redFlagMsg.style.display = 'block';
+                 // If Client: Just tack.
+                 if (isMultiplayer && !isHost) {
+                      if (network) network.sendToHost({ type: 'tack' });
+                 } else {
+                     // Host/SP Logic:
+                     gameState = 'playing';
+                     uiInstructions.innerText = "Tap to Tack";
+                     startTimerEl.style.display = 'none'; // Ensure timer is hidden
+                     
+                     const userBoat = boats.find(b => b.isUser);
+                     if (userBoat) {
+                         userBoat.moving = true;
+                         // userBoat.tackBoat(); // REMOVED: Don't tack on the first tap that starts the race
+                     }
+                     
+                     if (difficulty === 'will') {
+                            redFlagMsg.style.display = 'block';
+                     }
                  }
             }
             else if (gameState === 'playing') {
                 const userBoat = boats.find(b => b.isUser);
-                if (userBoat) userBoat.tackBoat();
+                if (userBoat) {
+                    if (isMultiplayer && !isHost) {
+                        // Client: Send Tack Request
+                        if (network) network.sendToHost({ type: 'tack' });
+                    } else {
+                        // Host or Single Player: Act locally
+                        userBoat.tackBoat();
+                    }
+                } else if (isMultiplayer && !isHost) {
+                    // Fallback: If 'isUser' check failed, maybe try sending tack anyway?
+                    // This happens if boat.isUser logic is out of sync.
+                    // Let's send a blind tack request, Host will validate ID.
+                     if (network) network.sendToHost({ type: 'tack' });
+                }
             } else if (gameState === 'finished') {
-                resetGame();
+                if (isMultiplayer) {
+                    if (isHost) {
+                        // Host can restart
+                        network.broadcast({ type: 'restart' });
+                        resetGame();
+                    } else {
+                        // Client waits for host
+                        // Do nothing
+                    }
+                } else {
+                    resetGame();
+                }
             }
         }
 
@@ -2364,6 +3044,57 @@
         // Prevent clicks in modal from triggering game
         settingsModal.addEventListener('mousedown', (e) => e.stopPropagation());
         settingsModal.addEventListener('touchstart', (e) => e.stopPropagation());
+
+        // Multiplayer UI Handlers
+        const mpHostBtn = document.getElementById('mp-host-btn');
+        const mpJoinBtn = document.getElementById('mp-join-btn');
+        const mpJoinId = document.getElementById('mp-join-id');
+
+        mpHostBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); // prevent game start underneath
+            if (mpStatus !== 'offline') return; // Prevent multiple clicks
+
+            mpStatus = 'connecting';
+            mpHostBtn.disabled = true;
+            mpJoinBtn.disabled = true;
+            mpJoinId.disabled = true;
+
+            isMultiplayer = true;
+            isHost = true;
+            myMultiplayerId = 0; // Host is 0
+            
+            if (!network) network = new NetworkManager();
+            network.init();
+            
+            // Apply MP Resolution and Reset
+            resize(); 
+            resetGame();
+
+            updateMpStatus('Initializing Host...', 'yellow');
+        });
+
+        mpJoinBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (mpStatus !== 'offline') return; // Prevent multiple clicks
+
+            const hostId = mpJoinId.value.trim().toUpperCase();
+            if (!hostId) return;
+            
+            mpStatus = 'connecting';
+            mpHostBtn.disabled = true;
+            mpJoinBtn.disabled = true;
+            mpJoinId.disabled = true;
+            
+            isMultiplayer = true;
+            isHost = false;
+
+            if (!network) network = new NetworkManager();
+            network.connectTo(hostId);
+
+            // Apply MP Resolution and Reset
+            resize(); 
+            resetGame();
+        });
 
         init();
     </script>
