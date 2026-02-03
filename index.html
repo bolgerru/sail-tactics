@@ -931,8 +931,8 @@
                         this.hailingTarget = null;
                         if (target) target.hailedBy = null; // Clear their flag
                         
-                        if (!this.isUser) {
-                            this.tackBoat(true); // Finally tack!
+                        if (!this.isUser && !isMultiplayer) {
+                            this.tackBoat(true); // Finally tack! (AI only; in MP humans tap)
                         }
                     }
                 }
@@ -948,11 +948,11 @@
                         this.initiateHail(myBlocker);
                     } else {
                         // I am free to tack.
-                        if (!this.isUser) {
+                        if (!this.isUser && !isMultiplayer) {
                             // AI: Force tack immediately (Rule 20 compliance)
                             this.tackBoat(true);
                         }
-                        // User: Do nothing (wait for manual input).
+                        // User / MP: Do nothing (wait for manual input).
                         // "TACK NOW!" is displayed in draw().
                     }
                 }
