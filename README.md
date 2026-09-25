@@ -23,7 +23,7 @@ A one-tap upwind sailing race against AI boats. Every tap is a tack, so the whol
 
 ## Settings
 
-The ⚙️ button lets you set the wind speed, the number of boats (2–10), difficulty and sound. Hold it for a second to open a hidden advanced menu with custom values, chaos mode and god mode.
+The settings button lets you set the wind speed, the number of boats (2–10), difficulty and sound. Hold it for a second to open a hidden advanced menu with custom values, chaos mode and god mode.
 
 ## Tech
 
