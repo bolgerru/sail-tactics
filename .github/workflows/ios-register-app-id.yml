@@ -26,6 +26,10 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
         run: |
+          if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_API_KEY_P8" ]; then
+            echo "::error::The repository secrets ASC_KEY_ID, ASC_ISSUER_ID and ASC_API_KEY_P8 are not all set. Run godot/tools/ios/set_secrets.ps1 first (see godot/IOS_RELEASE.md, step 2)."
+            exit 1
+          fi
           key_id="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
           issuer_id="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
           key_file="$RUNNER_TEMP/AuthKey_$key_id.p8"
