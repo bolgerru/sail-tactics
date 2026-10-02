@@ -28,8 +28,13 @@ if (-not $KeyId) {
 if (-not $IssuerId) {
     $IssuerId = Read-Host "Issuer ID (the UUID above the keys table in App Store Connect > Integrations)"
 }
-$KeyId = $KeyId.Trim()
-$IssuerId = $IssuerId.Trim()
+# Keep only what can be in the IDs, so a stray "#", quote or space is harmless.
+$KeyId = ($KeyId -replace "[^A-Za-z0-9]", "").ToUpper()
+$IssuerId = ($IssuerId -replace "[^A-Fa-f0-9-]", "").ToLower()
+if ($KeyId.Length -ne 10) { throw "Key ID should be 10 letters/digits, e.g. LA37C4G56W (got '$KeyId')." }
+if ($IssuerId -notmatch "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") {
+    throw "Issuer ID should look like 12345678-abcd-1234-abcd-1234567890ab (got '$IssuerId')."
+}
 
 $p12 = Join-Path $Dir "github-secrets\IOS_DIST_CERT_P12_BASE64.txt"
 $pw = Join-Path $Dir "github-secrets\IOS_DIST_CERT_P12_PASSWORD.txt"
