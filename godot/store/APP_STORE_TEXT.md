@@ -9,7 +9,7 @@ workflows (`godot/tools/ios/testflight_public.py`, `app_store.py`), so edit them
 **Beta App Description** [4,000]
 
 ```
-Sail Tactics is a one-tap upwind sailing race against AI boats. Every tap is a tack, so the whole game is about when to tack.
+Tack Tack is a one-tap upwind sailing race against AI boats. Every tap is a tack, so the whole game is about when to tack.
 
 - Time the start: tap before the gun and you get the black flag.
 - Sail into the gusts and stay out of other boats' wind shadow.
@@ -30,7 +30,7 @@ Please tell us if a race ever feels unfair, if the rules fire when they shouldn'
 **Review Notes** [4,000]
 
 ```
-Sail Tactics is a single-player game. There is no sign-in, no network access and no in-app purchases.
+Tack Tack is a single-player game. There is no sign-in, no network access and no in-app purchases.
 
 To play: tap once to start the 3-2-1 countdown, tap again after "GO!" to start sailing, then tap to tack. Tapping during the countdown gives a black flag (a deliberate game rule), and tapping after a finish restarts.
 
@@ -64,7 +64,7 @@ Time your tacks, catch the gusts, stay out of dirty air, and don't break the rac
 **Description** [4,000]
 
 ```
-Sail Tactics is a one-tap upwind sailing race. Every tap is a tack, so the whole game is about when to tack.
+Tack Tack is a one-tap upwind sailing race. Every tap is a tack, so the whole game is about when to tack.
 
 TIME THE START
 The countdown runs 3, 2, 1. Tap before the gun and you get the black flag. Tap at GO and you're racing.

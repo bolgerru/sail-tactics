@@ -1,4 +1,4 @@
-# Sail Tactics: iOS release checklist
+# Tack Tack: iOS release checklist
 
 TestFlight and the App Store work without a Mac, exactly like First Not Last: GitHub builds the
 game on a hosted Mac, signs it and uploads it. This reuses First Not Last's signing certificate
@@ -56,7 +56,7 @@ and App Store Connect API key, so setup is short.
    App, Explicit, `com.russell.sailtactics`, no capabilities).
 
 4. **[App Store Connect](https://appstoreconnect.apple.com) > Apps > + > New App**: iOS, name
-   "Sail Tactics" (it must be free on the store; if taken, use a variant), your language, Bundle ID
+   "Tack Tack" (it must be free on the store; if taken, use a variant), your language, Bundle ID
    `com.russell.sailtactics` (pick it from the list), SKU `sailtactics`, Full Access.
 
 ### First TestFlight build
