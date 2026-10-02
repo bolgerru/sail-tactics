@@ -44,7 +44,14 @@ class ApiError(Exception):
     def __init__(self, method, path, code, body):
         try:
             errors = json.loads(body).get("errors") or []
-            detail = "; ".join(e.get("detail") or e.get("title") or "" for e in errors) or body
+            parts = []
+            for e in errors:
+                parts.append(e.get("detail") or e.get("title") or "")
+                # Apple lists the real reasons under meta.associatedErrors, keyed by resource.
+                for resource, items in ((e.get("meta") or {}).get("associatedErrors") or {}).items():
+                    for item in items:
+                        parts.append("[%s] %s" % (resource, item.get("detail") or item.get("title") or item.get("code")))
+            detail = "; ".join(p for p in parts if p) or body
         except ValueError:
             detail = body
         super().__init__("%s %s failed (%s): %s" % (method, path, code, detail))
