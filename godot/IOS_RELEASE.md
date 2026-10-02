@@ -36,14 +36,16 @@ and App Store Connect API key, so setup is short.
    repo folder:
 
    ```powershell
-   .\godot\tools\ios\set_secrets.ps1 -KeyId <KEY_ID> -IssuerId <ISSUER_ID>
+   cd "C:\Tack Tack\sail-tactics"
+   .\godot\tools\ios\set_secrets.ps1
    ```
 
-   - `KEY_ID`: the Key ID of your App Store Connect API key. It is the same value as First Not
-     Last's `ASC_KEY_ID` secret, and the matching `AuthKey_<KEY_ID>.p8` is in
-     `C:\Users\russe\ios-signing` (there are two there; the script lists them if you pick wrong).
-   - `ISSUER_ID`: shown above the keys table at
+   It lists the API key files in `C:\Users\russe\ios-signing` and asks for two values. Type the real
+   values, not placeholders (PowerShell rejects `<` and `>`):
+   - **Key ID**: the Key ID of your App Store Connect API key, the same one as First Not Last's
+     `ASC_KEY_ID` secret. Check which keys are active at
      [App Store Connect > Users and Access > Integrations > App Store Connect API](https://appstoreconnect.apple.com/access/integrations/api).
+   - **Issuer ID**: the UUID shown above the keys table on that same page.
 
    It pipes your certificate, its password and the API key straight into this repo's GitHub secrets.
    Nothing is printed.
