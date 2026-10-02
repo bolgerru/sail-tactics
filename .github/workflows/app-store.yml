@@ -1,0 +1,89 @@
+# Reads and drives the App Store release through godot/tools/ios/app_store.py, so the App Store Connect
+# API key never has to leave GitHub. Run it from the Actions tab: "App Store" > Run workflow.
+#
+#   status   reads only: the listing, age rating, each version with its build and review details.
+#   prepare  fills the version in and attaches a build.
+#   cancel   withdraws a submission Apple is holding, giving up its place in the queue.
+#   submit   hands the prepared version to App Review.
+#   release  cancel, prepare and submit in one: this build in place of whatever Apple holds.
+#
+# Everything but status needs `confirm` typed. prepare and release upload the screenshots in
+# godot/store/iphone. Same secrets as the other iOS workflows (see godot/IOS_RELEASE.md).
+name: App Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "What to do"
+        required: true
+        type: choice
+        options: [status, prepare, cancel, submit, release]
+        default: status
+      build_number:
+        description: "prepare / submit / release: the build number, e.g. 20"
+        required: false
+        default: ""
+      confirm:
+        description: "anything but status: type 'confirm' to change what Apple holds"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  app-store:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run app_store.py
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          COMMAND: ${{ inputs.command }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          case "$COMMAND" in
+            prepare|submit|release)
+              if [ -z "$BUILD_NUMBER" ]; then
+                echo "::error::$COMMAND needs a build number"
+                exit 1
+              fi
+              ;;
+          esac
+          if [ "$COMMAND" != "status" ] && [ "$CONFIRM" != "confirm" ]; then
+            echo "::error::$COMMAND changes what Apple holds: type 'confirm' in the confirm box to mean it"
+            exit 1
+          fi
+
+          key_id="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
+          issuer_id="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+          key_file="$RUNNER_TEMP/AuthKey_$key_id.p8"
+          trap 'rm -f "$key_file"' EXIT
+          if printf '%s' "$ASC_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$ASC_API_KEY_P8" | tr -d '\r' > "$key_file"
+          else
+            printf '%s' "$ASC_API_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$key_file"
+          fi
+
+          args=(--key-id "$key_id" --issuer-id "$issuer_id" --key-file "$key_file")
+          if [ -n "$BUILD_NUMBER" ]; then
+            args+=(--build "$BUILD_NUMBER")
+          fi
+          if [ "$COMMAND" != "status" ]; then
+            args+=(--confirm)
+          fi
+          python3 godot/tools/ios/app_store.py "${args[@]}" "$COMMAND"

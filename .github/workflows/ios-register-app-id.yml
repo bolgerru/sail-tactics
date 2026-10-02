@@ -1,0 +1,39 @@
+# Registers the App ID com.russell.sailtactics in your Apple developer account through the App Store
+# Connect API, so you can pick it in App Store Connect's "New App" dialog. Safe to rerun. Needs the
+# three App Store Connect API secrets (see godot/IOS_RELEASE.md). Takes about 20 seconds.
+name: iOS register App ID
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Register the App ID
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          key_id="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
+          issuer_id="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+          key_file="$RUNNER_TEMP/AuthKey_$key_id.p8"
+          trap 'rm -f "$key_file"' EXIT
+          if printf '%s' "$ASC_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$ASC_API_KEY_P8" | tr -d '\r' > "$key_file"
+          else
+            printf '%s' "$ASC_API_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$key_file"
+          fi
+          python3 godot/tools/ios/app_profile.py register \
+            --key-id "$key_id" --issuer-id "$issuer_id" --key-file "$key_file"

@@ -1,0 +1,268 @@
+# Builds the Godot iOS app on a GitHub-hosted Mac and uploads it to TestFlight, so no Mac is needed.
+# Run it from the Actions tab: "iOS TestFlight" > Run workflow. The one-time setup (five repository
+# secrets, shared with First Not Last) is in godot/IOS_RELEASE.md.
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version players see, e.g. 1.0.1 (blank: the preset's 1.0.0)"
+        required: false
+        default: ""
+      build_number:
+        description: "Build number (blank: this run's number). Must be higher than the last upload."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GODOT_VERSION: "4.7.2"
+  BUNDLE_ID: com.russell.sailtactics
+  APP_NAME: SailTactics
+
+jobs:
+  testflight:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the secrets are set
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_P12_PASSWORD: ${{ secrets.IOS_DIST_CERT_P12_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          missing=""
+          for name in IOS_DIST_CERT_P12_BASE64 IOS_DIST_CERT_P12_PASSWORD ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY_P8; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing (Settings > Secrets and variables > Actions; see godot/IOS_RELEASE.md)"
+            exit 1
+          fi
+          xcodebuild -version
+
+      - name: Cache Godot and its iOS template
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot
+          key: godot-${{ env.GODOT_VERSION }}-macos-ios
+
+      - name: Download Godot
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          base="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          mkdir -p ~/godot && cd ~/godot
+          curl -fsSL --retry 3 -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          unzip -q godot.zip && rm godot.zip
+          # The template bundle is 1.3 GB; only the iOS template is kept (and cached).
+          curl -fsSL --retry 3 -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q -j templates.tpz templates/ios.zip templates/version.txt -d templates && rm templates.tpz
+
+      - name: Install Godot
+        run: |
+          templates="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$templates"
+          cp ~/godot/templates/* "$templates/"
+          echo "GODOT=$HOME/godot/Godot.app/Contents/MacOS/Godot" >> "$GITHUB_ENV"
+
+      - name: Cache imported assets
+        uses: actions/cache@v4
+        with:
+          path: godot/.godot
+          key: godot-import-${{ env.GODOT_VERSION }}-${{ hashFiles('godot/**/*.import', 'godot/project.godot') }}
+          restore-keys: godot-import-${{ env.GODOT_VERSION }}-
+
+      - name: Import the project
+        run: |
+          "$GODOT" --headless --path godot --import > "$RUNNER_TEMP/godot-import.log" 2>&1 || {
+            cat "$RUNNER_TEMP/godot-import.log"
+            exit 1
+          }
+          tail -n 20 "$RUNNER_TEMP/godot-import.log"
+
+      - name: Write the App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          key_id="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
+          issuer_id="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+          key_file="$RUNNER_TEMP/AuthKey_$key_id.p8"
+          if printf '%s' "$ASC_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$ASC_API_KEY_P8" | tr -d '\r' > "$key_file"
+          else
+            printf '%s' "$ASC_API_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$key_file"
+          fi
+          {
+            echo "ASC_KEY_FILE=$key_file"
+            echo "ASC_KEY_ID_CLEAN=$key_id"
+            echo "ASC_ISSUER_CLEAN=$issuer_id"
+          } >> "$GITHUB_ENV"
+
+      - name: Install the signing certificate and provisioning profile
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_P12_PASSWORD: ${{ secrets.IOS_DIST_CERT_P12_PASSWORD }}
+          IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          p12_password="$(printf '%s' "$IOS_DIST_CERT_P12_PASSWORD" | tr -d '[:space:]')"
+          printf '%s' "$IOS_DIST_CERT_P12_BASE64" | tr -d '[:space:]' | base64 --decode > "$RUNNER_TEMP/distribution.p12"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/distribution.p12" -k "$keychain" -P "$p12_password" -f pkcs12 -A
+          # Apple's intermediate certificate, so the identity is valid even if the image lacks it.
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$RUNNER_TEMP/AppleWWDRCAG3.cer" -k "$keychain" -A > /dev/null 2>&1 || true
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk '/"(Apple|iPhone) Distribution/ { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            security find-identity -p codesigning "$keychain"
+            echo "::error::IOS_DIST_CERT_P12_BASE64 holds no valid Apple Distribution certificate"
+            exit 1
+          fi
+
+          # The provisioning profile: made through the App Store Connect API (it registers the App ID
+          # if needed), unless a hand-made one is supplied as secret IOS_PROFILE_BASE64.
+          if [ -n "${IOS_PROFILE_BASE64:-}" ]; then
+            printf '%s' "$IOS_PROFILE_BASE64" | tr -d '[:space:]' | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+            profile_env="$(python3 godot/tools/ios/signing.py profile-env "$RUNNER_TEMP/profile.mobileprovision")"
+            eval "$profile_env"
+            for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+              mkdir -p "$dir"
+              cp "$RUNNER_TEMP/profile.mobileprovision" "$dir/$PROFILE_UUID.mobileprovision"
+            done
+          else
+            profile_env="$(python3 godot/tools/ios/app_profile.py profile \
+              --key-id "$ASC_KEY_ID_CLEAN" --issuer-id "$ASC_ISSUER_CLEAN" \
+              --key-file "$ASC_KEY_FILE" --cert-sha1 "$identity")"
+            eval "$profile_env"
+          fi
+          case " $PROFILE_CERT_SHA1S " in
+            *" $identity "*) ;;
+            *)
+              echo "::error::Profile '$PROFILE_NAME' doesn't include the certificate in IOS_DIST_CERT_P12_BASE64. Edit the profile on developer.apple.com and tick that certificate."
+              exit 1
+              ;;
+          esac
+          {
+            echo "TEAM_ID=$TEAM_ID"
+            echo "PROFILE_UUID=$PROFILE_UUID"
+            echo "PROFILE_NAME=$PROFILE_NAME"
+          } >> "$GITHUB_ENV"
+          echo "Signing for team $TEAM_ID with profile '$PROFILE_NAME' (expires $PROFILE_EXPIRES)"
+
+      - name: Export the Xcode project
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          BUILD_INPUT: ${{ inputs.build_number }}
+        run: |
+          build="${BUILD_INPUT:-$GITHUB_RUN_NUMBER}"
+          args=(--team-id "$TEAM_ID" --build "$build" --profile-uuid "$PROFILE_UUID" --profile-name "$PROFILE_NAME")
+          if [ -n "$VERSION_INPUT" ]; then args+=(--version "$VERSION_INPUT"); fi
+          python3 godot/tools/ios/make_ios_preset.py "${args[@]}"
+
+          out="$RUNNER_TEMP/xcode"
+          mkdir -p "$out"
+          if ! "$GODOT" --headless --path godot --export-release iOS "$out/$APP_NAME.ipa" > "$RUNNER_TEMP/godot-export.log" 2>&1 \
+              || [ ! -d "$out/$APP_NAME.xcodeproj" ]; then
+            cat "$RUNNER_TEMP/godot-export.log"
+            echo "::error::Godot's iOS export failed (log above)"
+            exit 1
+          fi
+          grep -E "WARNING|ERROR" "$RUNNER_TEMP/godot-export.log" || true
+          echo "XCODE_DIR=$out" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$build" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          # Manual signing with the Apple Distribution certificate and the profile above.
+          xcodebuild archive -quiet \
+            -project "$XCODE_DIR/$APP_NAME.xcodeproj" -scheme "$APP_NAME" -configuration Release \
+            -destination "generic/platform=iOS" -archivePath "$RUNNER_TEMP/$APP_NAME.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_FILE" \
+            -authenticationKeyID "$ASC_KEY_ID_CLEAN" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_CLEAN"
+
+      - name: Upload to TestFlight
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key><string>$PROFILE_UUID</string>
+            </dict>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/$APP_NAME.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_FILE" \
+            -authenticationKeyID "$ASC_KEY_ID_CLEAN" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_CLEAN"
+
+          echo "::notice::Build $BUILD_NUMBER is uploaded. App Store Connect emails you once it has processed (usually 5-30 minutes); then it appears under TestFlight."
+          echo "Uploaded build **$BUILD_NUMBER** to App Store Connect. It shows in TestFlight after processing." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect logs
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          cp "$RUNNER_TEMP"/godot-*.log "$RUNNER_TEMP/logs/" 2>/dev/null || true
+          cp "$RUNNER_TEMP/ExportOptions.plist" "$RUNNER_TEMP/logs/" 2>/dev/null || true
+          cp -R "${TMPDIR:-/tmp}"/*.xcdistributionlogs "$RUNNER_TEMP/logs/" 2>/dev/null || true
+
+      - name: Keep logs from a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-logs
+          path: ${{ runner.temp }}/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove signing files
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN:-}" ]; then security delete-keychain "$KEYCHAIN" || true; fi
+          rm -f "$RUNNER_TEMP"/distribution.p12 "$RUNNER_TEMP"/profile.* "$RUNNER_TEMP"/AuthKey_*.p8

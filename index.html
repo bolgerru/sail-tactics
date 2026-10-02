@@ -54,7 +54,7 @@
             padding: 20px;
             border-radius: 10px;
             text-align: center;
-            z-index: 1000; /* Ensure it's on top of everything including red flag (z-150) and medal (z-200) */
+            z-index: 1000; /* Ensure it's on top of everything including the medal (z-200) */
             width: 80%;
             max-width: 300px;
         }
@@ -119,30 +119,6 @@
             width: 100%;
             text-align: center;
         }
-        #red-flag-msg {
-            display: none;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(255, 68, 68, 0.9);
-            color: white;
-            padding: 20px 40px;
-            border-radius: 10px;
-            text-align: center;
-            font-size: 1.5rem;
-            font-weight: bold;
-            border: 3px solid white;
-            box-shadow: 0 0 20px rgba(255, 0, 0, 0.5);
-            z-index: 150;
-            pointer-events: none;
-            animation: pulse 1s infinite;
-        }
-        @keyframes pulse {
-            0% { transform: translate(-50%, -50%) scale(1); }
-            50% { transform: translate(-50%, -50%) scale(1.05); }
-            100% { transform: translate(-50%, -50%) scale(1); }
-        }
         #black-flag-msg {
             display: none;
             position: absolute;
@@ -171,7 +147,7 @@
         <h2>Settings</h2>
         
         <label>Wind Speed</label>
-        <input type="range" id="opt-speed" min="0.05" max="0.2" step="0.01">
+        <input type="range" id="opt-speed" min="0.1" max="0.4" step="0.01">
 
         <label>Number of Boats: <span id="opt-boats-val"></span></label>
         <input type="range" id="opt-boats" min="2" max="10" step="1">
@@ -195,13 +171,12 @@
 
         <label>Difficulty</label>
         <select id="opt-diff">
-            <option value="matty">Matty (Easiest)</option>
-            <option value="louis">Louis</option>
-            <option value="will">Will</option>
-            <option value="monkey">Monkey</option>
-            <option value="oisin">Oisin</option>
-            <option value="max">Max</option>
-            <option value="russell">Russell (Hardest)</option>
+            <option value="beginner">Beginner (Easiest)</option>
+            <option value="easy">Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+            <option value="expert">Expert</option>
+            <option value="master">Master (Hardest)</option>
         </select>
 
         <label class="sound-row">
@@ -217,10 +192,6 @@
     
     <div id="black-flag-msg">
         🏴 BLACK FLAG!
-    </div>
-
-    <div id="red-flag-msg">
-        🚩 Eunice:<br>RED FLAG FOR EVERYONE EXCPEPT YOU!
     </div>
 
     <div id="medal" style="display: none;">
@@ -240,9 +211,9 @@
         // Game State
         let width, height;
         const boats = [];
-        let BOAT_SPEED = 0.1; // Configurable
+        let BOAT_SPEED = 0.2; // Configurable
         let boatCount = 3; // Configurable
-        let difficulty = 'matty'; // Configurable
+        let difficulty = 'beginner'; // Configurable
         let soundEnabled = true;
         let BOAT_RADIUS = 15;
         let GOD_MODE = false;
@@ -605,7 +576,6 @@
                 this.heading = this.targetHeading; 
                 this.radius = BOAT_RADIUS;
                 this.finished = false;
-                this.spinDir = Math.random() < 0.5 ? 1 : -1; // For Will mode
                 this.moving = false; // Waiting for start
                 this.trail = []; // Wake trail
                 this.luffTimer = 0; // For sail animation
@@ -910,26 +880,17 @@
 
                 let isTacking = false;
 
-                // Will Mode: Continuous Spin
-                if (!this.isUser && difficulty === 'will') {
-                    this.heading += this.spinDir * TURN_SPEED;
-                    isTacking = true; // Considers turning for speed penalty
-                } 
-                else {
-                    // Normal Logic: Smoothly rotate heading towards targetHeading
-                    this.updateTargetHeading(); // Update target based on wind
+                // Smoothly rotate heading towards targetHeading
+                this.updateTargetHeading(); // Update target based on wind
 
-                    if (this.heading !== this.targetHeading) {
-                        isTacking = true;
-                        // Handle wrapping logic if we were using 0-360, but here headings are small radians.
-                        // Simple difference is fine.
-                        const diff = this.targetHeading - this.heading;
-                        if (Math.abs(diff) < TURN_SPEED) {
-                            this.heading = this.targetHeading;
-                            isTacking = false;
-                        } else {
-                            this.heading += Math.sign(diff) * TURN_SPEED;
-                        }
+                if (this.heading !== this.targetHeading) {
+                    isTacking = true;
+                    const diff = this.targetHeading - this.heading;
+                    if (Math.abs(diff) < TURN_SPEED) {
+                        this.heading = this.targetHeading;
+                        isTacking = false;
+                    } else {
+                        this.heading += Math.sign(diff) * TURN_SPEED;
                     }
                 }
 
@@ -939,13 +900,12 @@
                 if (!this.isUser) {
                     // Difficulty-based speed retention during tacks
                     switch(difficulty) {
-                        case 'matty': tackMultiplier = 0.6; break;
-                        case 'louis': tackMultiplier = 0.7; break;
-                        case 'will': tackMultiplier = 0.7; break;
-                        case 'monkey': tackMultiplier = 0.8; break;
-                        case 'oisin': tackMultiplier = 0.9; break;
-                        case 'max': tackMultiplier = 0.95; break;
-                        case 'russell': tackMultiplier = 0.98; break;
+                        case 'beginner': tackMultiplier = 0.6; break;
+                        case 'easy': tackMultiplier = 0.7; break;
+                        case 'medium': tackMultiplier = 0.8; break;
+                        case 'hard': tackMultiplier = 0.9; break;
+                        case 'expert': tackMultiplier = 0.95; break;
+                        case 'master': tackMultiplier = 0.98; break;
                     }
                 }
 
@@ -1076,7 +1036,7 @@
                 }
 
                 // AI Tacking Logic
-                if (!this.isUser && difficulty !== 'will') {
+                if (!this.isUser) {
                     const margin = 50;
                     const criticalMargin = 20;
                     
@@ -1147,27 +1107,27 @@
                         let useWindStrategy = true;
 
                         switch(difficulty) {
-                            case 'matty':
+                            case 'beginner':
                                 useWindStrategy = false; // Random tacking
                                 reactionChance = 0.002;
                                 break;
-                            case 'louis':
+                            case 'easy':
                                 useWindStrategy = false; // Random tacking
                                 reactionChance = 0.004; // Slightly more active
                                 break;
-                            case 'monkey':
+                            case 'medium':
                                 useWindStrategy = true;
                                 reactionChance = 0.005; // Slow reaction
                                 break;
-                            case 'oisin':
+                            case 'hard':
                                 useWindStrategy = true;
                                 reactionChance = 0.01;
                                 break;
-                            case 'max':
+                            case 'expert':
                                 useWindStrategy = true;
                                 reactionChance = 0.02;
                                 break;
-                            case 'russell':
+                            case 'master':
                                 useWindStrategy = true;
                                 reactionChance = 0.05; // Fast reaction
                                 break;
@@ -1561,16 +1521,11 @@
             uiInstructions.innerText = "Tap to Start Sequence";
             medalEl.style.display = 'none'; // Hide medal
             blackFlagMsg.style.display = 'none'; // Hide BF
-            
-            // Show Eunice message if Will mode
-            // BUT only after start. Wait for GO.
-            redFlagMsg.style.display = 'none';
         }
 
         function endGame(rank, suffix) {
             gameState = 'finished';
             uiInstructions.innerText = ""; // Clear bottom text
-            redFlagMsg.style.display = 'none'; // Hide Eunice
             
             // Show Medal
             medalEl.style.display = 'flex';
@@ -1593,7 +1548,7 @@
                 // Capitalize difficulty name
                 const diffName = difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
                 let winMsg = `Congrats! You beat ${diffName}!`;
-                if (difficulty === 'matty') {
+                if (difficulty === 'beginner') {
                     winMsg += "\nWant a medal bro?";
                 }
                 medalMsg.innerText = winMsg;
@@ -1722,6 +1677,8 @@
                     const b2 = boats[j];
                     
                     if (b1.finished || b1.dsq || b2.finished || b2.dsq) continue;
+                    // A user who hasn't tapped to start yet can't be hit (or disqualified).
+                    if ((b1.isUser && !b1.moving) || (b2.isUser && !b2.moving)) continue;
                     
                     const dx = b1.x - b2.x;
                     const dy = b1.y - b2.y;
@@ -2112,6 +2069,7 @@
                     sfx.playStartBeep(440 + (3-startTimer)*100); // Pitch up
                 } else if (startTimer === 0) {
                     startTimerEl.innerText = "GO!";
+                    uiInstructions.innerText = "Tap to Start Sailing";
                     sfx.playStartGun();
                     gameState = 'race_on'; 
                     launchAI();
@@ -2168,11 +2126,6 @@
                     // Also trigger AI if they haven't started (race_on handles it, but just in case)
                     if (startInterval) clearInterval(startInterval);
                     launchAI();
-                    
-                    // Show Eunice message if Will mode (delayed start)
-                    if (difficulty === 'will') {
-                        redFlagMsg.style.display = 'block';
-                    }
                 }
             }
             else if (gameState === 'race_on') {
@@ -2184,10 +2137,6 @@
                  const userBoat = boats.find(b => b.isUser);
                  if (userBoat) {
                      userBoat.moving = true;
-                 }
-                 
-                 if (difficulty === 'will') {
-                        redFlagMsg.style.display = 'block';
                  }
             }
             else if (gameState === 'playing') {
@@ -2211,7 +2160,6 @@
         const medalEl = document.getElementById('medal');
         const medalRank = document.getElementById('medal-rank');
         const medalMsg = document.getElementById('medal-msg');
-        const redFlagMsg = document.getElementById('red-flag-msg');
         const settingsBtn = document.getElementById('settings-btn');
         const settingsModal = document.getElementById('settings-modal');
         const saveBtn = document.getElementById('save-btn');

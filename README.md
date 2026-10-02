@@ -18,7 +18,7 @@ A one-tap upwind sailing race against AI boats. Every tap is a tack, so the whol
   - Rule 10: port gives way to starboard
   - Rule 13: don't tack too close to someone else
   - Rule 20: room to tack at an obstruction, including chains of boats passing the hail along
-- **AI opponents** at seven difficulty levels. They pick their tacks and follow the rules, including forced tacks under Rule 20.
+- **AI opponents** at six difficulty levels (Beginner to Master). They pick their tacks and follow the rules, including forced tacks under Rule 20.
 - Wakes, ripples, sound effects, and confetti when you win.
 
 ## Settings
@@ -27,9 +27,9 @@ The settings button lets you set the wind speed, the number of boats (2–10), d
 
 ## Tech
 
-Vanilla JavaScript and the HTML5 Canvas 2D API, in a single `index.html`. No frameworks, no build step and no assets. All the physics, the rules engine and the AI run in the browser.
+**Web version:** vanilla JavaScript and the HTML5 Canvas 2D API, in a single `index.html`. No frameworks, no build step and no assets. All the physics, the rules engine and the AI run in the browser. To run it locally, just open `index.html`.
 
-To run it locally, just open `index.html`.
+**iOS app:** a Godot 4.7 port of the same game lives in [`godot/`](godot/) (GDScript, custom 2D drawing, procedurally generated sound). See [`godot/IOS_RELEASE.md`](godot/IOS_RELEASE.md) for how it is built and shipped to the App Store.
 
 ---
 

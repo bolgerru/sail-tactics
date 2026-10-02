@@ -1,0 +1,57 @@
+# Opens TestFlight to anyone with a link (godot/tools/ios/testflight_public.py). Safe to rerun:
+#   1. first run fills in Test Information, makes the "Public" group and adds the newest build;
+#   2. after a contact phone is on file (enter it in the box below), a run sends the build to Beta App Review;
+#   3. after Apple approves it, a run prints the public link. Rerun after each new build to add it.
+# Uses the same App Store Connect API secrets as the iOS TestFlight workflow.
+name: TestFlight public link
+
+on:
+  workflow_dispatch:
+    inputs:
+      contact_phone:
+        description: "Reviewer contact phone with country code (blank: keep what App Store Connect has)"
+        required: false
+        default: ""
+      build_number:
+        description: "Build to add and submit, e.g. 16 (blank: the newest processed build)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight-public
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  public-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up external testing
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          CONTACT_PHONE: ${{ inputs.contact_phone }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          key_id="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
+          issuer_id="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+          key_file="$RUNNER_TEMP/AuthKey_$key_id.p8"
+          trap 'rm -f "$key_file"' EXIT
+          if printf '%s' "$ASC_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$ASC_API_KEY_P8" | tr -d '\r' > "$key_file"
+          else
+            printf '%s' "$ASC_API_KEY_P8" | tr -d '[:space:]' | base64 --decode > "$key_file"
+          fi
+          python3 godot/tools/ios/testflight_public.py \
+            --key-id "$key_id" --issuer-id "$issuer_id" --key-file "$key_file" --phone "$CONTACT_PHONE" \
+            --build "$BUILD_NUMBER"
