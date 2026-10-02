@@ -46,14 +46,25 @@ foreach ($f in @($p12, $pw, $p8)) {
         throw "Missing $f. API key files in ${Dir}: $keys"
     }
 }
-gh auth status | Out-Null
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    throw "The GitHub CLI (gh) is not installed. Install it from https://cli.github.com, then run: gh auth login"
+}
+gh auth status *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "The GitHub CLI is not logged in. Run:  gh auth login   (choose GitHub.com, HTTPS, and log in with the browser), then run this script again."
+}
+
+function Set-Secret($Name, $Value) {
+    $Value | gh secret set $Name --repo $Repo
+    if ($LASTEXITCODE -ne 0) { throw "Setting $Name failed (see the message above)." }
+}
 
 Write-Host "Setting secrets on $Repo ..."
-Get-Content -Raw $p12 | gh secret set IOS_DIST_CERT_P12_BASE64 --repo $Repo
-Get-Content -Raw $pw | gh secret set IOS_DIST_CERT_P12_PASSWORD --repo $Repo
-Get-Content -Raw $p8 | gh secret set ASC_API_KEY_P8 --repo $Repo
-$KeyId | gh secret set ASC_KEY_ID --repo $Repo
-$IssuerId | gh secret set ASC_ISSUER_ID --repo $Repo
+Set-Secret "IOS_DIST_CERT_P12_BASE64" (Get-Content -Raw $p12)
+Set-Secret "IOS_DIST_CERT_P12_PASSWORD" (Get-Content -Raw $pw)
+Set-Secret "ASC_API_KEY_P8" (Get-Content -Raw $p8)
+Set-Secret "ASC_KEY_ID" $KeyId
+Set-Secret "ASC_ISSUER_ID" $IssuerId
 
 Write-Host ""
 Write-Host "Done. Secrets now on ${Repo}:"
