@@ -30,11 +30,26 @@ Please tell us if a race ever feels unfair, if the rules fire when they shouldn'
 **Review Notes** [4,000]
 
 ```
-Tack Tack is a single-player game. There is no sign-in, no network access and no in-app purchases.
+Tack Tack is a single-player sailing game. There is no account, no sign-in, no network access, no user-generated content and no in-app purchases. A screen recording from a physical iPhone (launch to finish) is attached in the App Review reply.
 
-To play: tap once to start the 3-2-1 countdown, tap again after "GO!" to start sailing, then tap to tack. Tapping during the countdown gives a black flag (a deliberate game rule), and tapping after a finish restarts.
+1. PURPOSE AND AUDIENCE
+A one-tap upwind sailing race against AI boats for casual players and sailing fans. Each tap tacks the boat, so the game is about timing: reading wind shifts and gusts, staying out of other boats' wind shadow, and following the racing rules (port gives way to starboard, don't tack too close, give room to tack). Break a rule and you are disqualified. It teaches basic racing tactics in a short, playful race.
 
-Disclosure: holding the Settings button for one second opens an advanced menu for custom speed, boat count and boat size, plus Chaos Mode and God Mode. These are optional tuning options for experimenting; they do not unlock content.
+2. HOW TO USE IT (no login or sample files needed)
+- Launch: the Settings dialog opens first. Tap "Save & Restart" (or "Cancel") to begin.
+- Tap anywhere to start the 3-2-1 countdown. Tapping during the countdown gives a black flag (a deliberate game rule); tap again to restart.
+- Tap after "GO!" to start sailing, then tap to tack. Reach the red finish line first to win a medal. Tap after the result to restart.
+- Settings (top right): wind speed, number of boats (2-10), difficulty (Beginner to Master), sound.
+- Disclosure: holding the Settings button for one second opens an advanced menu (custom speed, boat count and size, Chaos Mode, God Mode). These are optional tuning options; they do not unlock any content.
+
+3. EXTERNAL SERVICES
+None. The app makes no network requests and uses no third-party SDKs, data providers, authentication, payment or AI services. All physics, rules and AI run on the device. Sound effects are generated in code. Built with the Godot Engine (MIT licence).
+
+4. REGIONAL DIFFERENCES
+None. The app works identically in every region. The interface is in English.
+
+5. REGULATED INDUSTRY / THIRD-PARTY MATERIAL
+Not applicable. The app has no regulated content and no protected third-party material; the icon, artwork and sounds are original or generated in code.
 ```
 
 ## TestFlight: each build, What to Test [4,000]
