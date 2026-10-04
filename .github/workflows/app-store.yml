@@ -6,6 +6,7 @@
 #   cancel   withdraws a submission Apple is holding, giving up its place in the queue.
 #   submit   hands the prepared version to App Review.
 #   release  cancel, prepare and submit in one: this build in place of whatever Apple holds.
+#   resubmit after replying to App Review about unresolved issues, send the same submission back.
 #
 # Everything but status needs `confirm` typed. prepare and release upload the screenshots in
 # godot/store/iphone. Same secrets as the other iOS workflows (see godot/IOS_RELEASE.md).
@@ -18,7 +19,7 @@ on:
         description: "What to do"
         required: true
         type: choice
-        options: [status, prepare, cancel, submit, release]
+        options: [status, prepare, cancel, submit, release, resubmit]
         default: status
       build_number:
         description: "prepare / submit / release: the build number, e.g. 20"

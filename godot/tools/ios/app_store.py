@@ -441,6 +441,24 @@ def submit(build_number):
                  a.get("versionString"), build_number, attributes(done).get("state")))
 
 
+def resubmit():
+    """After replying to App Review (e.g. "information needed"), marks the items of a submission in
+    UNRESOLVED_ISSUES as resolved and sends the same submission back, keeping the review thread."""
+    app_id = asc.find_app()["id"]
+    done = 0
+    for existing in asc.api_list("/apps/%s/reviewSubmissions?filter[platform]=IOS" % app_id):
+        if attributes(existing).get("state") != "UNRESOLVED_ISSUES":
+            continue
+        for item in asc.api_list("/reviewSubmissions/%s/items" % existing["id"]):
+            patch("reviewSubmissionItems", item["id"], {"resolved": True})
+        result = patch("reviewSubmissions", existing["id"], {"submitted": True})["data"]
+        asc.note("Resubmitted the submission that had unresolved issues: state now `%s`. Apple emails when it "
+                 "changes." % attributes(result).get("state"))
+        done += 1
+    if not done:
+        asc.note("Nothing to resubmit: no submission is in UNRESOLVED_ISSUES.")
+
+
 def release(build_number, screenshots=True):
     """Puts this build in front of Apple, in place of anything it is already holding."""
     app_id = asc.find_app()["id"]
@@ -460,13 +478,13 @@ def main():
                         help="submit / release / cancel: actually change what Apple holds")
     parser.add_argument("--no-screenshots", action="store_true",
                         help="prepare / release: leave the screenshots Apple already has (CI has no renders)")
-    parser.add_argument("command", choices=["status", "prepare", "submit", "cancel", "release"])
+    parser.add_argument("command", choices=["status", "prepare", "submit", "cancel", "release", "resubmit"])
     args = parser.parse_args()
     if not args.key_file.is_file():
         sys.exit("app_store: no API key file at %s" % args.key_file)
     if args.command in ("prepare", "submit", "release") and not args.build.strip():
         sys.exit("app_store: %s needs --build (the build number)" % args.command)
-    if args.command in ("submit", "release", "cancel") and not args.confirm:
+    if args.command in ("submit", "release", "cancel", "resubmit") and not args.confirm:
         sys.exit("app_store: %s changes what Apple holds; pass --confirm to mean it" % args.command)
     asc.TOKEN = jwt_es256(args.key_file, args.key_id.strip(), args.issuer_id.strip())
     try:
@@ -479,6 +497,8 @@ def main():
                 asc.note("Nothing to cancel: Apple is holding no submission.")
         elif args.command == "release":
             release(args.build.strip(), not args.no_screenshots)
+        elif args.command == "resubmit":
+            resubmit()
         else:
             submit(args.build.strip())
     except asc.ApiError as error:
