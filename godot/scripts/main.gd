@@ -69,6 +69,8 @@ func _ready() -> void:
 	sfx = SoundManager.new()
 	add_child(sfx)
 
+	add_child(TouchGuard.new())
+
 	hud = Hud.new()
 	add_child(hud)
 	hud.settings_requested.connect(_on_settings_requested)

@@ -1,33 +1,44 @@
-# Reply to App Review (Guideline 2.1, information needed)
+# Reply to App Review (Guideline 2.1(a), unresponsive on iPad)
 
-Paste this into the reply box in App Store Connect (App Review > the message > Reply) and attach the
-screen recording. The same information is already in the app's App Review Information notes.
+Rejection of 1.0.0 (3), October 14, 2026, on an iPad Air 11-inch (M3) running iPadOS 27.0: "app
+launched to unresponsive screen".
+
+**Most likely cause** (not reproduced on an iPad; it matches the symptom and the build has no other
+launch problem). Godot turns touches into the clicks that the game's buttons and taps listen for, and it
+follows one finger at a time. If iOS never reports that finger's release (this can happen when a
+touch is cancelled, for example by a system gesture or by taps while the app is still launching),
+Godot ignores every touch after it. The settings dialog still worked, but the game ignored all
+taps, so it sat on "Tap to Start Sequence". This is a known Godot iOS bug
+([godotengine/godot#102393](https://github.com/godotengine/godot/issues/102393)), still open.
+
+**Fix.** `scripts/touch_guard.gd` detects a touch that produced no click, frees the stuck finger and
+replays the touch. `tests/touch_test.gd` reproduces the bug (4 failures without the guard) and
+passes with it. Upload a new build (any build number above 3), then select it in App Store
+Connect for version 1.0.0 before replying.
+
+Paste this into the reply box in App Store Connect (App Review > the message > Reply):
 
 ```
 Hello,
 
-Thank you for the review. Here is the information requested for Tack Tack 1.0.0.
+Thank you for testing Tack Tack on iPad and for the details.
 
-1. Screen recording: attached. It was captured on a physical iPhone and shows the app launching and the full flow: the settings dialog, the 3-2-1 countdown, starting, tacking, and finishing a race, then changing settings and restarting. The app has no account registration, login, user-generated content or paid content, so there are no such flows to show.
+We found the cause: in some cases iOS did not report a finger being lifted (for example after taps during launch or a system gesture), and the game engine then ignored all later touches. This made the app look frozen after launch.
 
-2. Purpose and audience: Tack Tack is a single-player, one-tap upwind sailing race against AI boats, for casual players and sailing fans. Each tap tacks the boat, so the game is about timing: reading wind shifts and gusts, staying out of other boats' wind shadow, and following the racing rules (port gives way to starboard, do not tack too close, give room to tack). Breaking a rule disqualifies you. It teaches basic racing tactics in a short, playful race.
+Build 1.0.0 (NEW_BUILD_NUMBER) fixes this. The app now recovers from a missing touch release, so every tap is registered. We have added an automated test for this case.
 
-3. How to access the main features: no login or sample files are needed. On launch, tap "Save & Restart" in the Settings dialog. Tap once to start the countdown, tap again after "GO!" to start sailing, then tap to tack. Reach the red finish line first to win a medal. Settings (top right) change wind speed, number of boats, difficulty and sound. Holding the Settings button for one second opens an optional advanced menu (custom values, Chaos Mode, God Mode); it unlocks no content.
-
-4. External services: none. The app makes no network requests and uses no third-party SDKs, data providers, authentication, payment or AI services. Everything runs on the device. It is built with the Godot Engine (MIT licence).
-
-5. Regional differences: none. The app works identically in all regions.
-
-6. Regulated industry or protected material: not applicable.
+To use the app: on launch, tap "Save & Restart" in the Settings dialog. Tap once to start the countdown, tap again after "GO!" to start sailing, then tap to tack.
 
 Best regards,
 Russell Bolger
 ```
 
-## Recording the screen on your iPhone
+Replace `NEW_BUILD_NUMBER` with the uploaded build's number.
 
-1. Settings > Control Center > add **Screen Recording** (once).
-2. Delete the app and install the TestFlight build fresh, so the recording starts from a clean launch.
-3. Swipe down from the top-right corner, tap the record button, wait for the 3-second countdown, and close Control Center.
-4. Tap the app icon and, in one take: pick settings (e.g. Medium, 4 boats) and tap Save & Restart, tap to start the countdown, tap after GO!, tack a few times, finish the race (or get disqualified, which is also a normal flow), tap to restart, and open Settings once more.
-5. Stop the recording from the red status bar or Control Center. It lands in Photos. A minute or two is plenty.
+## Before resubmitting
+
+1. Install the new build from TestFlight (delete the old app first).
+2. Launch it and tap the screen several times with two or three fingers while it is still on the
+   blue launch screen. Then tap Save & Restart and play a race. Every tap should respond.
+3. If you can borrow an iPad, repeat it there: the app runs in iPhone mode on iPad, which is how
+   App Review tested it.
