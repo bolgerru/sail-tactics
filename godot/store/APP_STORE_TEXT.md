@@ -32,6 +32,9 @@ Please tell us if a race ever feels unfair, if the rules fire when they shouldn'
 ```
 Tack Tack is a single-player sailing game. There is no account, no sign-in, no network access, no user-generated content and no in-app purchases. A screen recording from a physical iPhone (launch to finish) is attached in the App Review reply.
 
+FIX FOR THE iPAD ISSUE IN BUILD 3 (Guideline 2.1(a), October 14, 2026)
+Build 3 could stop responding to taps right after launch: if iOS did not report a finger being lifted (for example after taps during launch or a system gesture), the game engine ignored every later touch. This build recovers from a missing touch release, so every tap registers, and an automated test now covers this case. It runs on iPad in iPhone compatibility mode.
+
 1. PURPOSE AND AUDIENCE
 A one-tap upwind sailing race against AI boats for casual players and sailing fans. Each tap tacks the boat, so the game is about timing: reading wind shifts and gusts, staying out of other boats' wind shadow, and following the racing rules (port gives way to starboard, don't tack too close, give room to tack). Break a rule and you are disqualified. It teaches basic racing tactics in a short, playful race.
 

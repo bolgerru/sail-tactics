@@ -25,7 +25,7 @@ Thank you for testing Tack Tack on iPad and for the details.
 
 We found the cause: in some cases iOS did not report a finger being lifted (for example after taps during launch or a system gesture), and the game engine then ignored all later touches. This made the app look frozen after launch.
 
-Build 1.0.0 (NEW_BUILD_NUMBER) fixes this. The app now recovers from a missing touch release, so every tap is registered. We have added an automated test for this case.
+Build 1.0.0 (4) fixes this. The app now recovers from a missing touch release, so every tap is registered. We have added an automated test for this case.
 
 To use the app: on launch, tap "Save & Restart" in the Settings dialog. Tap once to start the countdown, tap again after "GO!" to start sailing, then tap to tack.
 
@@ -33,7 +33,6 @@ Best regards,
 Russell Bolger
 ```
 
-Replace `NEW_BUILD_NUMBER` with the uploaded build's number.
 
 ## Before resubmitting
 
